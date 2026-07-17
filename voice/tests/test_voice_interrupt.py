@@ -239,6 +239,112 @@ def test_answer_failure_plays_fallback_and_restores_idle():
     assert not app.stop_guide_event.is_set()
 
 
+def test_answer_success_runs_resume_notice_before_restoring_idle():
+    app = FakeApp([])
+    events = []
+
+    succeeded = answer_with_fallback(
+        app,
+        "不应进入日志的问题",
+        answer=lambda: events.append("answer"),
+        fallback=lambda: events.append("fallback"),
+        after_success=lambda: events.append("notice"),
+    )
+
+    assert succeeded is True
+    assert events == ["answer", "notice"]
+    assert app.modes == ["answer", "idle"]
+
+
+def test_answer_failure_does_not_run_resume_notice():
+    app = FakeApp([])
+    events = []
+
+    def fail_answer():
+        raise RuntimeError("mock failure")
+
+    succeeded = answer_with_fallback(
+        app,
+        "不应进入日志的问题",
+        answer=fail_answer,
+        fallback=lambda: events.append("fallback"),
+        after_success=lambda: events.append("notice"),
+    )
+
+    assert succeeded is False
+    assert events == ["fallback"]
+
+
+def test_route_interrupt_answer_enables_resume_notice(monkeypatch):
+    navigation = pytest.importorskip("nav_route_then_speak")
+    calls = []
+
+    def fake_answer_then_resume(_app, question, announce_resume=False):
+        calls.append((question, announce_resume))
+
+    def fake_run(_app, _coordinator, _text, _index, answer, **_kwargs):
+        answer("打断问题")
+
+    monkeypatch.setattr(navigation, "answer_then_resume", fake_answer_then_resume)
+    monkeypatch.setattr(navigation, "run_interruptible_segment", fake_run)
+    app = SimpleNamespace(route_interrupts=object())
+
+    navigation.speak_with_interrupt_resume(app, "当前导览台词", 2)
+
+    assert calls == [("打断问题", True)]
+
+
+def test_interrupt_resume_notice_uses_required_phrase(monkeypatch):
+    navigation = pytest.importorskip("nav_route_then_speak")
+    spoken = []
+
+    def fake_answer_with_fallback(
+        _app,
+        _question,
+        answer,
+        fallback,
+        after_success=None,
+    ):
+        assert after_success is not None
+        after_success()
+        return True
+
+    monkeypatch.setattr(navigation, "answer_with_fallback", fake_answer_with_fallback)
+    monkeypatch.setattr(
+        navigation,
+        "speak_one_answer_sentence",
+        lambda _app, text, index: spoken.append((text, index)),
+    )
+    app = SimpleNamespace(args=SimpleNamespace(max_answer_sentences=3))
+
+    succeeded = navigation.answer_then_resume(
+        app,
+        "打断问题",
+        announce_resume=True,
+    )
+
+    assert succeeded is True
+    assert spoken == [("如果没有别的问题，我将继续导览。", 4)]
+
+
+def test_idle_answer_does_not_enable_resume_notice(monkeypatch):
+    navigation = pytest.importorskip("nav_route_then_speak")
+    calls = []
+    app = SimpleNamespace(route_voice_lock=threading.Lock())
+
+    monkeypatch.setattr(
+        navigation,
+        "answer_then_resume",
+        lambda _app, question, announce_resume=False: calls.append(
+            (question, announce_resume)
+        ),
+    )
+
+    navigation.answer_background_question(app, "空闲问题")
+
+    assert calls == [("空闲问题", False)]
+
+
 def test_duplicate_final_result_is_consumed_once_and_not_reanswered_as_idle():
     coordinator = RouteInterruptCoordinator(boundary_grace=0)
     coordinator.begin_attempt(3)

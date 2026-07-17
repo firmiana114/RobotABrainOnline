@@ -355,12 +355,21 @@ def answer_with_fallback(
     question: str,
     answer: Callable[[], None],
     fallback: Callable[[], None],
+    after_success: Callable[[], None] | None = None,
 ) -> bool:
     app.set_mode("answer")
     succeeded = False
     try:
         answer()
         succeeded = True
+        if after_success is not None:
+            try:
+                after_success()
+            except Exception as after_success_exc:
+                logger.exception(
+                    "回答完成后的恢复提示播放失败：error_type=%s",
+                    type(after_success_exc).__name__,
+                )
     except Exception as exc:
         logger.exception(
             "流式回答失败，播放降级提示：question_length=%s error_type=%s",

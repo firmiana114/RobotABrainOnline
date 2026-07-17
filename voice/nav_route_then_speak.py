@@ -36,6 +36,7 @@ FAILED = {"failed", "nav_failed", "error"}
 clean_api_key = None
 clean_tts_text = None
 logger = logging.getLogger("voice_route")
+INTERRUPT_RESUME_NOTICE = "如果没有别的问题，我将继续导览。"
 
 
 def load_route(path):
@@ -643,7 +644,20 @@ def stream_qwen_and_speak_by_sentence(app, question, max_sentences):
     )
 
 
-def answer_then_resume(app, question):
+def answer_then_resume(app, question, announce_resume=False):
+    after_success = None
+    if announce_resume:
+        def announce():
+            logger.info("开始播放打断回答后的恢复导览提示")
+            speak_one_answer_sentence(
+                app,
+                INTERRUPT_RESUME_NOTICE,
+                app.args.max_answer_sentences + 1,
+            )
+            logger.info("打断回答后的恢复导览提示播放完成")
+
+        after_success = announce
+
     return answer_with_fallback(
         app,
         question,
@@ -653,7 +667,10 @@ def answer_then_resume(app, question):
         fallback=lambda: speak_one_answer_sentence(
             app, "抱歉，刚才回答时出现了问题。", 1
         ),
+        after_success=after_success,
     )
+
+
 def init_voice(args):
     assistant_cls = load_assistant(args.voice_project)
     app = assistant_cls(make_voice_args(args))
@@ -665,13 +682,16 @@ def init_voice(args):
     app.set_mode("idle")
     return app, stt
 
+
 def speak_with_interrupt_resume(app, text, index):
     run_interruptible_segment(
         app,
         app.route_interrupts,
         text,
         index,
-        answer=lambda question: answer_then_resume(app, question),
+        answer=lambda question: answer_then_resume(
+            app, question, announce_resume=True
+        ),
         is_resume=is_resume_command,
     )
 
