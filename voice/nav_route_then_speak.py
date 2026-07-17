@@ -4,6 +4,7 @@
 import argparse
 import audioop
 import json
+import logging
 import os
 import queue
 import re
@@ -22,11 +23,18 @@ import dashscope
 import numpy as np
 from dashscope.audio.asr import Recognition, RecognitionCallback, RecognitionResult
 
+from voice_console.interrupt import (
+    RouteInterruptCoordinator,
+    answer_with_fallback,
+    run_interruptible_segment,
+)
+
 
 ARRIVED = {"arrived", "mid_arrived"}
 FAILED = {"failed", "nav_failed", "error"}
 clean_api_key = None
 clean_tts_text = None
+logger = logging.getLogger("voice_route")
 
 
 def load_route(path):
@@ -291,47 +299,50 @@ class RouteSTTCallback(RecognitionCallback):
             return
 
         mode, _, _ = self.app.get_mode()
+        coordinator = self.app.route_interrupts
         if mode == "answer":
             return
 
         is_end = RecognitionResult.is_sentence_end(sentence)
         if not is_end:
             if self.app.contains_wake_word(text):
-                if mode == "guide":
-                    print("\r[voice] wake word detected, pausing guide: " + text, end="", flush=True)
-                    self.app.request_stop_guide(text)
-                elif mode == "interrupted":
-                    self.app.request_stop_guide(text)
+                if mode in ("guide", "interrupted"):
+                    session_id = coordinator.claim_interrupt()
+                    if session_id is not None:
+                        logger.info(
+                            "检测到播报中唤醒词：phase=partial session=%s text_length=%s",
+                            session_id,
+                            len(text),
+                        )
+                        self.app.request_stop_guide()
                 else:
-                    print("\r[voice] wake word detected: " + text, end="", flush=True)
+                    logger.info("检测到空闲唤醒词中间结果：text_length=%s", len(text))
             return
 
-        print("\n[stt] final:", text, flush=True)
         mode, _, _ = self.app.get_mode()
-        if mode == "guide":
-            if self.app.contains_wake_word(text):
-                self.app.request_stop_guide(text)
-                question = self.app.remove_wake_word(text)
-                question = self.app.strip_guide_echo(question)
-                if question:
-                    self.app.question_queue.put(question)
-            return
-
-        if mode == "interrupted":
-            if self.app.contains_wake_word(text):
+        has_wake_word = self.app.contains_wake_word(text)
+        if mode in ("guide", "interrupted") or coordinator.has_active_interrupt():
+            if has_wake_word:
+                session_id = coordinator.claim_interrupt()
+                if session_id is not None:
+                    self.app.request_stop_guide()
                 question = self.app.remove_wake_word(text)
             else:
                 question = text
             question = self.app.strip_guide_echo(question)
-            if question:
-                self.app.question_queue.put(question)
+            accepted = coordinator.submit_interrupt_part(question)
+            logger.info(
+                "收到播报打断最终结果：accepted=%s text_length=%s",
+                accepted,
+                len(text),
+            )
             return
 
-        if mode == "idle" and self.app.contains_wake_word(text):
+        if mode == "idle" and has_wake_word:
             question = self.app.remove_wake_word(text)
             question = self.app.strip_guide_echo(question)
             if question:
-                self.app.question_queue.put(question)
+                coordinator.submit_idle_question(question)
 
 
 class ArecordSTT:
@@ -459,7 +470,7 @@ def synth_answer_sentence(app, sentence, index):
         return None
     with tempfile.NamedTemporaryFile(suffix=f"_route_answer_{index}.wav", delete=False, dir=str(app.runtime_dir)) as f:
         wav_path = Path(f.name)
-    print(f"\n[answer:{index}] {sentence}", flush=True)
+    logger.info("准备合成回答音频：sentence_index=%s text_length=%s", index, len(sentence))
     t0 = time.perf_counter()
     app.synthesize_to_wav(sentence, wav_path)
     t1 = time.perf_counter()
@@ -486,6 +497,8 @@ def speak_one_answer_sentence(app, sentence, index):
 def start_answer_pipeline(app):
     synth_queue = queue.Queue()
     audio_queue = queue.Queue()
+    errors = []
+    errors_lock = threading.Lock()
 
     def synth_worker():
         while True:
@@ -499,7 +512,9 @@ def start_answer_pipeline(app):
                 if wav_path is not None:
                     audio_queue.put((index, wav_path))
             except Exception as exc:
-                print("\n[voice] answer synth failed:", repr(exc), flush=True)
+                logger.exception("回答音频合成失败：sentence_index=%s", index if item else None)
+                with errors_lock:
+                    errors.append(exc)
             finally:
                 synth_queue.task_done()
 
@@ -512,7 +527,9 @@ def start_answer_pipeline(app):
                 _, wav_path = item
                 play_answer_wav(app, wav_path)
             except Exception as exc:
-                print("\n[voice] answer playback failed:", repr(exc), flush=True)
+                logger.exception("回答音频播放失败")
+                with errors_lock:
+                    errors.append(exc)
             finally:
                 audio_queue.task_done()
 
@@ -520,7 +537,7 @@ def start_answer_pipeline(app):
     play_thread = threading.Thread(target=play_worker, daemon=True)
     synth_thread.start()
     play_thread.start()
-    return synth_queue, audio_queue, synth_thread, play_thread
+    return synth_queue, audio_queue, synth_thread, play_thread, errors
 
 
 def stream_qwen_and_speak_by_sentence(app, question, max_sentences):
@@ -564,12 +581,11 @@ def stream_qwen_and_speak_by_sentence(app, question, max_sentences):
     if app.args.enable_search:
         extra_body = {"enable_search": True, "search_options": {"forced_search": True, "search_strategy": "turbo"}}
 
-    print("\nUser question:", question, flush=True)
-    print("Qwen(stream):", end="", flush=True)
+    print(f"\nQwen(stream): started question_length={len(question)}", flush=True)
     answer_parts = []
     pending = ""
     spoken = 0
-    synth_queue, audio_queue, synth_thread, play_thread = start_answer_pipeline(app)
+    synth_queue, audio_queue, synth_thread, play_thread, errors = start_answer_pipeline(app)
 
     try:
         stream = app.qwen_client.chat.completions.create(
@@ -590,7 +606,6 @@ def stream_qwen_and_speak_by_sentence(app, question, max_sentences):
             piece = getattr(delta, "content", None) or ""
             if not piece:
                 continue
-            print(piece, end="", flush=True)
             answer_parts.append(piece)
             pending += piece
             sentences, pending = split_complete_sentences(pending)
@@ -614,75 +629,56 @@ def stream_qwen_and_speak_by_sentence(app, question, max_sentences):
         synth_thread.join(timeout=1.0)
         play_thread.join(timeout=1.0)
 
+    if errors:
+        raise RuntimeError("answer audio pipeline failed") from errors[0]
+
     final_answer = "".join(answer_parts).strip()
     if final_answer:
         app.chat_messages.append({"role": "assistant", "content": final_answer})
-    print("\n[voice] answer playback finished, resume guide", flush=True)
+    logger.info(
+        "流式回答播放完成：sentences=%s answer_length=%s",
+        spoken,
+        len(final_answer),
+    )
 
 
 def answer_then_resume(app, question):
-    app.set_mode("answer")
-    try:
-        stream_qwen_and_speak_by_sentence(app, question, app.args.max_answer_sentences)
-    except Exception as exc:
-        print("\n[voice] streaming answer failed:", repr(exc), flush=True)
-        try:
-            speak_one_answer_sentence(app, "抱歉，刚才回答时出现了问题。", 1)
-        except Exception:
-            pass
-    finally:
-        app.stop_guide_event.clear()
-        app.set_mode("idle")
+    return answer_with_fallback(
+        app,
+        question,
+        answer=lambda: stream_qwen_and_speak_by_sentence(
+            app, question, app.args.max_answer_sentences
+        ),
+        fallback=lambda: speak_one_answer_sentence(
+            app, "抱歉，刚才回答时出现了问题。", 1
+        ),
+    )
 def init_voice(args):
     assistant_cls = load_assistant(args.voice_project)
     app = assistant_cls(make_voice_args(args))
     app.kokoro_device = args.kokoro_device
     app.preload_kokoro()
     app.route_voice_lock = threading.Lock()
+    app.route_interrupts = RouteInterruptCoordinator(args.interrupt_boundary_grace)
     stt = ArecordSTT(app, app.args)
     app.set_mode("idle")
     return app, stt
 
 def speak_with_interrupt_resume(app, text, index):
-    while app.running:
-        interrupted = app.play_guide_sentence(index, text)
-        if not interrupted:
-            app.set_mode("idle")
-            return
-
-        try:
-            question = app.wait_for_complete_question(timeout=1.2, settle_time=0.35)
-            if is_resume_command(question):
-                print("[voice] 收到继续导览指令，恢复当前播报。", flush=True)
-            elif question:
-                answer_then_resume(app, question)
-                print("[voice] 回答结束，恢复导览播报。", flush=True)
-            else:
-                print("没有收到完整问题，准备恢复当前播报。", flush=True)
-        finally:
-            app.stop_guide_event.clear()
-            app.set_mode("idle")
-        time.sleep(app.args.resume_delay)
+    run_interruptible_segment(
+        app,
+        app.route_interrupts,
+        text,
+        index,
+        answer=lambda question: answer_then_resume(app, question),
+        is_resume=is_resume_command,
+    )
 
 
 def speak_playback_only(app, text, index):
     wav_path = app.ensure_guide_wav(index, text)
     print("[voice] playback-only mode, playing without wake-word interrupt.", flush=True)
     app.play_wav(wav_path, interruptible=False)
-
-
-def strip_wake_prefix_question(app, text):
-    raw = (text or "").strip("，。！？!?、,. ")
-    if not raw:
-        return None
-
-    match = re.match(r"^(小\s*智|小\s*知|小\s*志|晓\s*智)", raw)
-    if not match:
-        return None
-
-    question = raw[match.end():].strip("，。！？!?、,. ")
-    question = app.strip_guide_echo(question)
-    return question
 
 
 def is_resume_command(text):
@@ -702,54 +698,9 @@ def is_resume_command(text):
     }
     if normalized in commands:
         return True
-    return normalized.startswith("继续") and any(word in normalized for word in ("导览", "捣览", "播报", "讲解", "介绍"))
-
-
-def collect_idle_question(app, first_text):
-    first = strip_wake_prefix_question(app, first_text)
-    if first is None:
-        print(f"[voice] ignore non-wake speech while navigating: {first_text}", flush=True)
-        return ""
-
-    parts = []
-    if first:
-        parts.append(first)
-    start = time.time()
-    last_part_time = time.time() if parts else None
-
-    while app.running and time.time() - start < app.args.question_timeout:
-        if parts and last_part_time is not None:
-            if time.time() - last_part_time >= app.args.question_settle_time:
-                break
-
-        try:
-            item = app.question_queue.get(timeout=0.08)
-        except queue.Empty:
-            continue
-
-        item = (item or "").strip()
-        if not item:
-            continue
-
-        prefixed = strip_wake_prefix_question(app, item)
-        if prefixed is not None:
-            item = prefixed
-        else:
-            item = app.strip_guide_echo(item)
-
-        if item and len(item.strip("，。！？!?、,. ")) >= 2:
-            parts.append(item)
-            last_part_time = time.time()
-
-    cleaned = []
-    for item in parts:
-        item = item.strip("，。！？!?、,. ")
-        if not item:
-            continue
-        if item not in cleaned:
-            cleaned.append(item)
-
-    return "，".join(cleaned).strip("，。！？!?、,. ")
+    return normalized.startswith("继续") and any(
+        word in normalized for word in ("导览", "捣览", "播报", "讲解", "介绍")
+    )
 
 
 def answer_background_question(app, question):
@@ -760,7 +711,7 @@ def answer_background_question(app, question):
         print("[voice] ignore resume command while not in guide speech.", flush=True)
         return
 
-    print(f"[voice] background question: {question}", flush=True)
+    logger.info("开始处理空闲问答：question_length=%s", len(question))
     with app.route_voice_lock:
         answer_then_resume(app, question)
 
@@ -768,26 +719,13 @@ def answer_background_question(app, question):
 def background_question_loop(app, stop_event):
     print("[voice] background XiaoZhi question listener enabled.", flush=True)
     while app.running and not stop_event.is_set():
+        question = app.route_interrupts.get_idle_question(timeout=0.1)
+        if question is None:
+            continue
         try:
-            item = app.question_queue.get(timeout=0.1)
-        except queue.Empty:
-            continue
-
-        mode, _, _ = app.get_mode()
-        if mode != "idle":
-            app.question_queue.put(item)
-            time.sleep(0.05)
-            continue
-
-        question = (item or "").strip()
-        if not question:
-            continue
-
-        threading.Thread(
-            target=answer_background_question,
-            args=(app, question),
-            daemon=True,
-        ).start()
+            answer_background_question(app, question)
+        finally:
+            app.route_interrupts.idle_task_done()
 
 
 def speak_segment(app, node, segment, index, stt_enabled, action_aliases):
@@ -935,6 +873,7 @@ def build_parser():
     parser.add_argument("--kokoro-speed", type=float, default=1.0)
     parser.add_argument("--kokoro-device", default="cuda")
     parser.add_argument("--resume-delay", type=float, default=0.5)
+    parser.add_argument("--interrupt-boundary-grace", type=float, default=0.9)
     parser.add_argument("--action-alias", default="")
     parser.add_argument("--qa-context-file", default="")
     parser.add_argument("--qa-context-max-chars", type=int, default=12000)

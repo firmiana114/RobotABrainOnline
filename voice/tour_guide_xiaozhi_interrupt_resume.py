@@ -10,6 +10,7 @@ import audioop
 import signal
 import hashlib
 import argparse
+import logging
 import threading
 import subprocess
 import tempfile
@@ -25,6 +26,8 @@ from openai import OpenAI
 from kokoro import KModel, KPipeline
 from dashscope.audio.asr import Recognition, RecognitionCallback, RecognitionResult
 
+from voice_console.interrupt import play_audio_file
+
 
 TOUR_SENTENCES = [
     "清华大学无锡应用技术研究院成立于2023年，是由清华大学与无锡市人民政府联合共建的科研机构。",
@@ -33,6 +36,7 @@ TOUR_SENTENCES = [
     "目前，研究院已建成微纳电子与系统芯片、集成电路创新服务平台、能源物联网等30余个研究中心。",
     "同时，研究院引进了由张亚勤院士牵头的清华大学智能产业研究院，成立了智能产业创新中心，持续赋能前沿技术的研发与应用。",
 ]
+logger = logging.getLogger("tour_guide")
 
 
 def clean_api_key(key):
@@ -544,40 +548,17 @@ class TourGuideAssistant:
         return wav_path
 
     def play_wav(self, wav_path: Path, interruptible: bool = False) -> bool:
-        cmd = ["aplay", "-q"]
-        if self.args.aplay_device:
-            cmd.extend(["-D", self.args.aplay_device])
-        cmd.append(str(wav_path))
+        def process_changed(process):
+            self.current_play_proc = process
 
-        proc = subprocess.Popen(cmd)
-        self.current_play_proc = proc
-
-        interrupted = False
-
-        try:
-            while self.running:
-                ret = proc.poll()
-                if ret is not None:
-                    break
-
-                if interruptible and self.stop_guide_event.is_set():
-                    interrupted = True
-                    try:
-                        proc.terminate()
-                        proc.wait(timeout=0.5)
-                    except Exception:
-                        try:
-                            proc.kill()
-                        except Exception:
-                            pass
-                    break
-
-                time.sleep(0.03)
-
-        finally:
-            self.current_play_proc = None
-
-        return interrupted
+        return play_audio_file(
+            wav_path=wav_path,
+            device=self.args.aplay_device,
+            interruptible=interruptible,
+            stop_event=self.stop_guide_event,
+            running=lambda: self.running,
+            process_changed=process_changed,
+        )
 
     def create_recognition(self):
         return Recognition(

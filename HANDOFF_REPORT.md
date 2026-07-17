@@ -73,6 +73,18 @@ docker run --rm unitree_slam_example_new:humble check
 - 诊断日志会输出 `[route] post-wait start seconds=...` 和 `[route] post-wait complete seconds=...`，便于确认等待生效，不记录台词或隐私内容。
 - 回归测试覆盖字段保留、非法值、零等待和短等待执行链；点位 8 的 277 秒配置以及 0.05 秒短等待链路已验证。
 
+## 导览语音打断并发竞态修复
+
+- 根因：旧实现由播报打断主线程和后台空闲问答线程共同消费 `question_queue`；后台还会在非 `idle` 状态反复取出再放回。WAV 自然结束边界没有保留唤醒归属，最终识别稍晚到达时会被后台线程接走，主导览则已推进下一段。
+- `voice_console/interrupt.py` 新增 `RouteInterruptCoordinator`，为每次台词播放分配 attempt、为每次打断分配 session。播报中的中间唤醒先声明 session 再停止播放器，最终问题只能提交给该 session。
+- WAV 正常退出后默认保留 0.9 秒有界边界窗口；窗口内到达的唤醒仍归属当前台词。当前打断完成前主线程不会返回，Qwen 推理和回答播放期间无法推进下一段。
+- 打断问题不再进入后台队列；空闲问题使用独立有界队列和一个常驻串行消费者，不再反复回队或为每个问题创建线程。迟到的同一最终结果会在短窗口内去重，避免重复回答。
+- “继续导览”、无完整问题超时和回答完成后仍从当前台词开头重播；回答异常先播放降级提示，处理结束后才恢复。
+- `play_audio_file()` 检查 `aplay` 返回码并区分正常完成、主动打断和播放失败。非零退出或启动/终止异常会抛出保留异常链的 `AudioPlaybackError`，不再被当作台词成功完成。
+- 新增 INFO/ERROR 诊断日志：attempt/session 生命周期、边界归属、问题片段数量与长度、回答阶段、音频设备、文件名和返回码；不记录识别全文、问题全文、密钥或音频数据。
+- 本机全量测试为 `32 passed, 2 skipped`，跳过项依赖本机未安装的 DashScope/完整语音栈；新增纯并发测试连续运行 10 轮均通过。NX Python 3.8 环境候选副本全量测试为 `34 passed`。
+- 未启动导航、手臂或完整导览，未发送机器人动作。真实麦克风、扬声器、慢 Qwen 网络和 WAV 自然结束边界仍需现场安全条件下验证。
+
 ## 已验证事实
 
 - `docker run --rm unitree_slam_example_new:humble check` 成功；六个节点 ELF 的 `ldd` 无缺失依赖，RUNPATH 指向镜像内 SDK 和自定义 Action。
