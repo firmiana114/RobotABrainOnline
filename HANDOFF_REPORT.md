@@ -96,6 +96,7 @@ docker run --rm unitree_slam_example_new:humble check
 
 ## 已验证事实
 
+- 根目录新增 `README.md`，集中说明 NX 正式导览的启动前安全检查、网页/命令行启动顺序、状态与日志查看、停止顺序和常见失败；不包含纯语音试听流程。
 - `docker run --rm unitree_slam_example_new:humble check` 成功；六个节点 ELF 的 `ldd` 无缺失依赖，RUNPATH 指向镜像内 SDK 和自定义 Action。
 - 无宿主 SDK 上下文仍可使用既有镜像编译 `custom_action_ws` 和六个节点。
 - Compose、Shell 语法、Python compileall 和 systemd unit 静态检查通过。
