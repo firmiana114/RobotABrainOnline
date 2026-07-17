@@ -1,0 +1,21 @@
+.DS_Store
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# CMake/colcon and generated runtime files
+example/build_docker/
+custom_action_ws/build/
+custom_action_ws/install/
+custom_action_ws/log/
+runtime/
+
+# NX host-only voice runtime, credentials and model cache
+voice/.venv/
+voice/hf_cache/
+voice/runtime/
+voice/*.whl
+
+# ROS and application logs
+*.log
+log/

@@ -1,0 +1,26 @@
+[Unit]
+Description=Voice G1 navigation node
+After=network-online.target
+Wants=network-online.target docker.service
+After=docker.service
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=unitree
+Group=unitree
+WorkingDirectory=/home/unitree/RobotABrainOnline/voice
+Environment=VOICE_PROJECT_ROOT=/home/unitree/RobotABrainOnline/voice
+Environment=VOICE_STACK_ROOT=/home/unitree/RobotABrainOnline
+Environment=NAV_IFACE=eth0
+ExecStart=/home/unitree/RobotABrainOnline/voice/scripts/start_navigation.sh
+Restart=on-failure
+RestartSec=3
+KillMode=control-group
+TimeoutStopSec=15
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

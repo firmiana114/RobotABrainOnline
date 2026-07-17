@@ -1,0 +1,28 @@
+services:
+  slam-example:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      additional_contexts:
+        unitree_sdk2: ${UNITREE_SDK2_CONTEXT:-/mnt/ssd/navgation/projects/unitree_sdk2}
+    image: unitree_slam_example_new:humble
+    container_name: unitree_slam_example_new
+    network_mode: host
+    ipc: host
+    privileged: true
+    stdin_open: true
+    tty: true
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    working_dir: /mnt/ssd/navgation/projects/temp/unitree_slam_example_new
+    environment:
+      ROS_DOMAIN_ID: ${ROS_DOMAIN_ID:-0}
+      RMW_IMPLEMENTATION: ${HUMBLE_RMW_IMPLEMENTATION:-rmw_fastrtps_cpp}
+      ROS_LOG_DIR: ${HUMBLE_ROS_LOG_DIR:-/tmp/unitree-slam-ros/log}
+      FASTRTPS_DEFAULT_PROFILES_FILE: /etc/unitree/fastdds-eth0.xml
+      FASTDDS_DEFAULT_PROFILES_FILE: /etc/unitree/fastdds-eth0.xml
+      CMAKE_BUILD_TYPE: ${CMAKE_BUILD_TYPE:-Release}
+      BUILD_JOBS: ${BUILD_JOBS:-4}
+    volumes:
+      - .:/mnt/ssd/navgation/projects/temp/unitree_slam_example_new
+      - ./runtime/fastdds.xml:/etc/unitree/fastdds-eth0.xml:ro
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw

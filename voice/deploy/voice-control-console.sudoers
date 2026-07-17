@@ -1,0 +1,5 @@
+Cmnd_Alias VOICE_START_SERVICES = /usr/bin/systemctl start voice-navigation.service, /usr/bin/systemctl start voice-arm-control.service, /usr/bin/systemctl start voice-tour-guide.service
+Cmnd_Alias VOICE_RESTART_BASE_SERVICES = /usr/bin/systemctl restart voice-navigation.service, /usr/bin/systemctl restart voice-arm-control.service
+Cmnd_Alias VOICE_STOP_TOUR = /usr/bin/systemctl stop voice-tour-guide.service
+Cmnd_Alias VOICE_RESET_SERVICES = /usr/bin/systemctl reset-failed voice-navigation.service, /usr/bin/systemctl reset-failed voice-arm-control.service, /usr/bin/systemctl reset-failed voice-tour-guide.service
+unitree ALL=(root) NOPASSWD: VOICE_START_SERVICES, VOICE_RESTART_BASE_SERVICES, VOICE_STOP_TOUR, VOICE_RESET_SERVICES

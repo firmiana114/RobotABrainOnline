@@ -1,0 +1,23 @@
+float32 position_x
+float32 position_y
+float32 position_z
+float32 orientation_x
+float32 orientation_y
+float32 orientation_z
+float32 orientation_w
+---
+float32 position_x_delta
+float32 position_y_delta
+float32 position_z_delta
+float32 orientation_x_delta
+float32 orientation_y_delta
+float32 orientation_z_delta
+float32 orientation_w_delta
+---
+float32 position_x_remaining
+float32 position_y_remaining
+float32 position_z_remaining
+float32 orientation_x_remaining
+float32 orientation_y_remaining
+float32 orientation_z_remaining
+float32 orientation_w_remaining

@@ -1,0 +1,21 @@
+[Unit]
+Description=Voice Humble navigation, pose and arm HTTP bridge
+After=network-online.target docker.service
+Wants=network-online.target docker.service
+
+[Service]
+Type=simple
+User=unitree
+Group=unitree
+WorkingDirectory=/home/unitree/RobotABrainOnline/voice
+Environment=VOICE_PROJECT_ROOT=/home/unitree/RobotABrainOnline/voice
+ExecStart=/home/unitree/RobotABrainOnline/voice/scripts/start_arm_bridge.sh
+Restart=on-failure
+RestartSec=3
+KillMode=control-group
+TimeoutStopSec=15
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,25 @@
+[Unit]
+Description=Voice G1 online route tour
+Requires=voice-arm-bridge.service
+After=voice-navigation.service voice-arm-control.service voice-arm-bridge.service
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=unitree
+Group=unitree
+WorkingDirectory=/home/unitree/RobotABrainOnline/voice
+Environment=VOICE_PROJECT_ROOT=/home/unitree/RobotABrainOnline/voice
+Environment=VOICE_STACK_ROOT=/home/unitree/RobotABrainOnline
+Environment=ENABLE_SEARCH=1
+ExecStart=/home/unitree/RobotABrainOnline/voice/scripts/start_tour.sh
+Restart=no
+KillSignal=SIGTERM
+KillMode=control-group
+TimeoutStopSec=20
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

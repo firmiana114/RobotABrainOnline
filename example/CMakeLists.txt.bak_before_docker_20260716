@@ -1,0 +1,171 @@
+project(slam_example)
+cmake_minimum_required(VERSION 3.16)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+set(UNITREE_DDS_LIB_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../unitree_sdk2/thirdparty/lib/${CMAKE_SYSTEM_PROCESSOR}")
+set(CMAKE_BUILD_RPATH "${UNITREE_DDS_LIB_DIR};/opt/ros/humble/lib;/mnt/ssd/navgation/projects/custom_action_ws/install/custom_action_interfaces/lib")
+set(CMAKE_INSTALL_RPATH "${UNITREE_DDS_LIB_DIR};/opt/ros/humble/lib;/mnt/ssd/navgation/projects/custom_action_ws/install/custom_action_interfaces/lib")
+set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
+
+include_directories(/usr/local/include include)
+
+find_package(unitree_sdk2 REQUIRED)
+find_package(rclcpp REQUIRED)
+find_package(rclcpp_action REQUIRED)
+find_package(std_msgs REQUIRED)
+find_package(geometry_msgs REQUIRED)
+find_package(custom_action_interfaces REQUIRED)
+
+add_executable(keyDemo src/keyDemo.cpp)
+set_target_properties(keyDemo PROPERTIES OUTPUT_NAME keyDemo_bin)
+target_link_libraries(keyDemo unitree_sdk2)
+
+set(KEYDEMO_WRAPPER "${CMAKE_CURRENT_BINARY_DIR}/keyDemo")
+file(GENERATE OUTPUT "${KEYDEMO_WRAPPER}" CONTENT [=[#!/usr/bin/env bash
+set -eo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+EXAMPLE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+PROJECTS_DIR="$(cd "$EXAMPLE_DIR/../.." && pwd)"
+ROS_SETUP="/opt/ros/humble/setup.bash"
+WS_SETUP="$PROJECTS_DIR/custom_action_ws/install/setup.bash"
+UNITREE_DDS_LIB="$PROJECTS_DIR/unitree_sdk2/thirdparty/lib/$(uname -m)"
+CUSTOM_ACTION_LIB="$PROJECTS_DIR/custom_action_ws/install/custom_action_interfaces/lib"
+
+set +u
+source "$ROS_SETUP"
+source "$WS_SETUP"
+export LD_LIBRARY_PATH="$UNITREE_DDS_LIB:/opt/ros/humble/lib:$CUSTOM_ACTION_LIB"
+set -u
+
+exec "$SCRIPT_DIR/keyDemo_bin" "$@"
+]=])
+add_custom_command(TARGET keyDemo POST_BUILD
+    COMMAND /bin/chmod +x "${KEYDEMO_WRAPPER}")
+
+add_executable(goGoalNavigation src/goGoalNavigation_ros2.cpp)
+target_include_directories(goGoalNavigation PRIVATE ${std_msgs_INCLUDE_DIRS})
+target_link_libraries(
+    goGoalNavigation
+    unitree_sdk2
+    rclcpp::rclcpp
+    rclcpp_action::rclcpp_action
+    ${std_msgs_LIBRARIES}
+)
+ament_target_dependencies(goGoalNavigation custom_action_interfaces geometry_msgs)
+
+add_executable(goGoalNavigation66 src/goGoalNavigation_ros2_66.cpp)
+set_target_properties(goGoalNavigation66 PROPERTIES OUTPUT_NAME goGoalNavigation66_bin)
+target_include_directories(goGoalNavigation66 PRIVATE ${std_msgs_INCLUDE_DIRS})
+target_link_libraries(
+    goGoalNavigation66
+    unitree_sdk2
+    rclcpp::rclcpp
+    rclcpp_action::rclcpp_action
+    ${std_msgs_LIBRARIES}
+)
+ament_target_dependencies(goGoalNavigation66 custom_action_interfaces geometry_msgs)
+
+set(GOAL_NAV_WRAPPER "${CMAKE_CURRENT_BINARY_DIR}/goGoalNavigation66")
+file(GENERATE OUTPUT "${GOAL_NAV_WRAPPER}" CONTENT [=[#!/usr/bin/env bash
+set -eo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+EXAMPLE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+PROJECTS_DIR="$(cd "$EXAMPLE_DIR/../.." && pwd)"
+ROS_SETUP="/opt/ros/humble/setup.bash"
+WS_SETUP="$PROJECTS_DIR/custom_action_ws/install/setup.bash"
+UNITREE_DDS_LIB="$PROJECTS_DIR/unitree_sdk2/thirdparty/lib/$(uname -m)"
+CUSTOM_ACTION_LIB="$PROJECTS_DIR/custom_action_ws/install/custom_action_interfaces/lib"
+
+set +u
+source "$ROS_SETUP"
+source "$WS_SETUP"
+export LD_LIBRARY_PATH="$UNITREE_DDS_LIB:/opt/ros/humble/lib:$CUSTOM_ACTION_LIB"
+set -u
+
+exec "$SCRIPT_DIR/goGoalNavigation66_bin" "$@"
+]=])
+add_custom_command(TARGET goGoalNavigation66 POST_BUILD
+    COMMAND /bin/chmod +x "${GOAL_NAV_WRAPPER}")
+
+add_executable(gestureTopicBridge src/gesture_topic_bridge.cpp)
+target_include_directories(gestureTopicBridge PRIVATE ${std_msgs_INCLUDE_DIRS})
+target_link_libraries(
+    gestureTopicBridge
+    unitree_sdk2
+    rclcpp::rclcpp
+    rclcpp_action::rclcpp_action
+    ${std_msgs_LIBRARIES}
+)
+ament_target_dependencies(gestureTopicBridge custom_action_interfaces)
+
+add_executable(integratedLauncher src/integrated_launcher.cpp)
+
+add_library(g1_actions STATIC
+    src/actions/g1_actions.cpp
+)
+target_include_directories(g1_actions PUBLIC include)
+
+add_executable(g1Arm7DIYActionExample src/g1_arm7__diy_action_example.cpp)
+target_include_directories(g1Arm7DIYActionExample PRIVATE ${std_msgs_INCLUDE_DIRS})
+target_link_libraries(
+    g1Arm7DIYActionExample
+    unitree_sdk2
+    g1_actions
+    rclcpp::rclcpp
+    rclcpp_action::rclcpp_action
+    ${std_msgs_LIBRARIES}
+)
+ament_target_dependencies(g1Arm7DIYActionExample custom_action_interfaces)
+
+add_executable(g1ArmOfficialActionServer src/g1_arm_official_action_server.cpp)
+set_target_properties(g1ArmOfficialActionServer PROPERTIES OUTPUT_NAME g1ArmOfficialActionServer_bin)
+target_include_directories(g1ArmOfficialActionServer PRIVATE ${std_msgs_INCLUDE_DIRS})
+target_link_libraries(
+    g1ArmOfficialActionServer
+    unitree_sdk2
+    rclcpp::rclcpp
+    rclcpp_action::rclcpp_action
+    ${std_msgs_LIBRARIES}
+)
+ament_target_dependencies(g1ArmOfficialActionServer custom_action_interfaces)
+
+set(G1_ARM_SERVER_WRAPPER "${CMAKE_CURRENT_BINARY_DIR}/g1ArmOfficialActionServer")
+file(GENERATE OUTPUT "${G1_ARM_SERVER_WRAPPER}" CONTENT [=[#!/usr/bin/env bash
+set -eo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+EXAMPLE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+PROJECTS_DIR="$(cd "$EXAMPLE_DIR/../.." && pwd)"
+ROS_SETUP="/opt/ros/humble/setup.bash"
+WS_SETUP="$PROJECTS_DIR/custom_action_ws/install/setup.bash"
+UNITREE_DDS_LIB="$PROJECTS_DIR/unitree_sdk2/thirdparty/lib/$(uname -m)"
+CUSTOM_ACTION_LIB="$PROJECTS_DIR/custom_action_ws/install/custom_action_interfaces/lib"
+
+set +u
+source "$ROS_SETUP"
+source "$WS_SETUP"
+export LD_LIBRARY_PATH="$UNITREE_DDS_LIB:/opt/ros/humble/lib:$CUSTOM_ACTION_LIB"
+set -u
+
+exec "$SCRIPT_DIR/g1ArmOfficialActionServer_bin" "$@"
+]=])
+add_custom_command(TARGET g1ArmOfficialActionServer POST_BUILD
+    COMMAND /bin/chmod +x "${G1_ARM_SERVER_WRAPPER}")
+
+# goGoalNavigation launches this sibling executable at runtime.
+add_dependencies(goGoalNavigation g1Arm7DIYActionExample)
+
+add_executable(goGoalNavigationRos2Mock src/goGoalNavigation_ros2_mock.cpp)
+target_include_directories(goGoalNavigationRos2Mock PRIVATE ${std_msgs_INCLUDE_DIRS})
+target_link_libraries(
+    goGoalNavigationRos2Mock
+    rclcpp::rclcpp
+    rclcpp_action::rclcpp_action
+    ${std_msgs_LIBRARIES}
+)
+ament_target_dependencies(goGoalNavigationRos2Mock custom_action_interfaces geometry_msgs)

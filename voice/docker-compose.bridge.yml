@@ -1,0 +1,23 @@
+services:
+  arm-bridge:
+    image: unitree_slam_example_new:humble
+    network_mode: host
+    ipc: host
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    working_dir: /workspace/voice
+    environment:
+      RMW_IMPLEMENTATION: rmw_fastrtps_cpp
+      ROS_DOMAIN_ID: ${ROS_DOMAIN_ID:-0}
+      ROS_LOG_DIR: /tmp/unitree-slam-ros/log
+      FASTRTPS_DEFAULT_PROFILES_FILE: /etc/unitree/fastdds-eth0.xml
+      FASTDDS_DEFAULT_PROFILES_FILE: /etc/unitree/fastdds-eth0.xml
+    volumes:
+      - .:/workspace/voice
+      - ./runtime/fastdds.xml:/etc/unitree/fastdds-eth0.xml:ro
+    entrypoint: ["/bin/bash", "-lc"]
+    command:
+      - >-
+        set -e;
+        source /opt/ros/humble/setup.bash;
+        source /opt/unitree_slam/custom_action_ws/setup.bash;
+        exec python3 /workspace/voice/arm_action_bridge.py --host 127.0.0.1 --port 8765

@@ -1,0 +1,8 @@
+float64 yaw
+float64 pitch
+---
+float64 yaw_delta
+float64 pitch_delta
+---
+float64 yaw_remaining
+float64 pitch_remaining

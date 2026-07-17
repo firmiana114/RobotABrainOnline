@@ -1,0 +1,9 @@
+numpy==1.24.4
+scipy==1.10.1
+dashscope>=1.25,<2
+openai>=1.70,<3
+soundfile>=0.12,<0.14
+pyaudio>=0.2.14,<0.3
+# Kokoro 0.9.4 declares Python >=3.10 although its runtime works on NX Python
+# 3.8 after postponing annotations. scripts/install_nx_venv.sh handles that
+# package and its language/model dependencies explicitly.

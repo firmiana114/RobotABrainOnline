@@ -1,0 +1,7 @@
+example/build
+example/build_docker
+custom_action_ws/build
+custom_action_ws/install
+custom_action_ws/log
+**/__pycache__
+*.pyc
