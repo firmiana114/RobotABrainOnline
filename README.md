@@ -142,7 +142,7 @@ journalctl -b -u voice-arm-bridge.service --no-pager
 journalctl -b -u voice-control-console.service --no-pager
 ```
 
-导览服务重启时会导入 Torch/Kokoro、把模型加载到 CUDA、初始化 Pipeline、执行首次推理，并预生成整条路线的语音缓存。旧模型冷启动实测约 18 秒，当前 `Kokoro-82M / zm_yunxi` 在缓存完备后的离线冷进程实测约 13.25 秒。日志中的 `[startup]` 会记录 `voice_ready`、`guide_cache_ready`、`stt_ready` 和 `nav_subscriber_ready` 的阶段与累计耗时；这些都发生在预热期，不会发送导航或手臂动作。状态进入“已预热”后，“启动导览”只触发任务，避免重复支付进程冷启动成本。
+导览服务重启时会导入 Torch/Kokoro、把模型加载到 CUDA、初始化 Pipeline、执行首次推理，并预生成整条路线的语音缓存。旧模型冷启动实测约 18 秒，当前 `Kokoro-82M / zm_yunxi` 在缓存完备后的离线冷进程实测约 13.25 秒；首次使用新语速分块版本或修改路线后，还需等待全部台词重新合成。日志中的 `[startup]` 会记录 `voice_ready`、`guide_cache_ready`、`stt_ready` 和 `nav_subscriber_ready` 的阶段与累计耗时，`[tts]` 会记录不含台词正文的分块指标；这些都发生在预热期，不会发送导航或手臂动作。状态进入“已预热”后，“启动导览”只触发任务，避免重复支付进程冷启动成本。
 
 日志中不应粘贴或记录 API Key、完整识别文本、完整问题内容或大体积音频数据。
 

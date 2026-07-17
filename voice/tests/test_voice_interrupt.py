@@ -1,8 +1,10 @@
 from pathlib import Path
 from types import SimpleNamespace
+import hashlib
 import threading
 import time
 
+import numpy as np
 import pytest
 
 from voice_console.interrupt import (
@@ -568,3 +570,81 @@ def test_guide_cache_key_changes_with_kokoro_voice(tmp_path: Path):
     male_path = assistant.guide_wav_path(1, "欢迎参观。")
 
     assert female_path != male_path
+
+
+def test_kokoro_text_split_recognizes_chinese_punctuation():
+    guide = pytest.importorskip("tour_guide_xiaozhi_interrupt_resume")
+    text = "甲" * 30 + "。" + "乙" * 30 + "。"
+
+    chunks = guide.split_kokoro_text(text, lambda value: len(value) * 4, max_phonemes=220)
+
+    assert [chunk for chunk, _, _ in chunks] == ["甲" * 30 + "。", "乙" * 30 + "。"]
+    assert chunks[0][1] == pytest.approx(0.28)
+    assert all(phonemes <= 220 for _, _, phonemes in chunks)
+
+
+def test_kokoro_text_split_hard_limits_long_unpunctuated_text():
+    guide = pytest.importorskip("tour_guide_xiaozhi_interrupt_resume")
+    text = "甲" * 140
+
+    chunks = guide.split_kokoro_text(text, lambda value: len(value) * 4, max_phonemes=220)
+
+    assert len(chunks) >= 3
+    assert all(phonemes <= 220 for _, _, phonemes in chunks)
+    assert "".join(chunk for chunk, _, _ in chunks).replace("，", "") == text
+
+
+def test_kokoro_synthesis_uses_safe_chunks_and_inserts_pause(monkeypatch, tmp_path):
+    guide = pytest.importorskip("tour_guide_xiaozhi_interrupt_resume")
+    assistant = object.__new__(guide.TourGuideAssistant)
+    assistant.kokoro_voice = "zm_yunxi"
+    assistant.kokoro_sample_rate = 100
+    assistant.args = SimpleNamespace(kokoro_speed=1.0)
+    calls = []
+
+    class Pipeline:
+        @staticmethod
+        def g2p(value):
+            return "p" * (len(value) * 4), None
+
+        def __call__(self, value, voice, speed, split_pattern):
+            calls.append((value, voice, speed, split_pattern))
+            return iter([SimpleNamespace(audio=np.ones(10, dtype=np.float32))])
+
+    assistant.kokoro_pipeline = Pipeline()
+    written = {}
+    monkeypatch.setattr(
+        guide.sf,
+        "write",
+        lambda path, audio, sample_rate: written.update(
+            path=path,
+            audio=audio,
+            sample_rate=sample_rate,
+        ),
+    )
+
+    assistant.synthesize_to_wav("甲" * 30 + "。" + "乙" * 30 + "。", tmp_path / "out.wav")
+
+    assert len(calls) == 2
+    assert all(len(value) * 4 <= guide.KOKORO_MAX_CHUNK_PHONEMES for value, _, _, _ in calls)
+    assert all(split_pattern is None for _, _, _, split_pattern in calls)
+    assert written["sample_rate"] == 100
+    assert len(written["audio"]) == 48
+    assert np.count_nonzero(written["audio"][10:38]) == 0
+
+
+def test_guide_cache_key_includes_prosody_version(tmp_path: Path):
+    guide = pytest.importorskip("tour_guide_xiaozhi_interrupt_resume")
+    assistant = object.__new__(guide.TourGuideAssistant)
+    assistant.guide_cache_dir = tmp_path
+    assistant.kokoro_repo_id = "hexgrad/Kokoro-82M"
+    assistant.kokoro_voice = "zm_yunxi"
+    assistant.args = SimpleNamespace(kokoro_speed=1.0)
+
+    current = assistant.guide_wav_path(1, "欢迎参观。")
+    assert guide.KOKORO_CACHE_VERSION == "zh-prosody-v2"
+    legacy_digest = hashlib.sha1(
+        "hexgrad/Kokoro-82M|zm_yunxi|1.0|欢迎参观。".encode("utf-8")
+    ).hexdigest()[:16]
+
+    assert current.name != f"guide_01_{legacy_digest}.wav"

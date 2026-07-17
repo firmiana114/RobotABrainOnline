@@ -53,6 +53,20 @@ def test_supervisor_logs_safe_startup_metrics(config_and_store, caplog):
     assert "elapsed_seconds=18.001" in caplog.text
 
 
+def test_supervisor_logs_safe_tts_chunk_metrics(config_and_store, caplog):
+    config, _store = config_and_store
+    supervisor = TourSupervisor(config)
+
+    with caplog.at_level(logging.INFO):
+        supervisor._handle_line(
+            "[tts] synthesis_ready chars=185 chunks=4 max_phonemes=215 "
+            "pause_seconds=0.680 samples=904080"
+        )
+
+    assert "event=synthesis_ready" in caplog.text
+    assert "max_phonemes=215" in caplog.text
+
+
 def test_supervisor_tracks_preheated_task_lifecycle(config_and_store, monkeypatch):
     config, _store = config_and_store
     supervisor = TourSupervisor(config)

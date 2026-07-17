@@ -38,6 +38,9 @@ TOUR_SENTENCES = [
     "同时，研究院引进了由张亚勤院士牵头的清华大学智能产业研究院，成立了智能产业创新中心，持续赋能前沿技术的研发与应用。",
 ]
 logger = logging.getLogger("tour_guide")
+KOKORO_CACHE_VERSION = "zh-prosody-v2"
+KOKORO_MAX_CHUNK_PHONEMES = 220
+KOKORO_HARD_PHONEME_LIMIT = 510
 
 
 def clean_api_key(key):
@@ -75,6 +78,84 @@ def split_complete_sentences(buffer: str):
             sentences.append(sentence)
         start = end
     return sentences, buffer[start:].strip()
+
+
+def _kokoro_pause_after(text: str) -> float:
+    ending = text.rstrip()[-1:] if text.strip() else ""
+    if ending in "。！？!?":
+        return 0.28
+    if ending in "；;":
+        return 0.20
+    if ending in "，,、：:":
+        return 0.12
+    return 0.10
+
+
+def _split_piece_by_phonemes(piece, phoneme_count, max_phonemes):
+    remaining = piece.strip()
+    chunks = []
+    while remaining:
+        if phoneme_count(remaining) <= max_phonemes:
+            chunks.append(remaining)
+            break
+
+        low = 1
+        high = len(remaining)
+        best = 0
+        while low <= high:
+            middle = (low + high) // 2
+            candidate = remaining[:middle].rstrip()
+            if candidate and phoneme_count(candidate + "，") <= max_phonemes:
+                best = middle
+                low = middle + 1
+            else:
+                high = middle - 1
+        if best <= 0:
+            raise RuntimeError("Kokoro 无法在安全音素长度内切分文本")
+
+        preferred = max(
+            remaining.rfind(mark, max(1, best // 2), best)
+            for mark in (" ", "、", "，", ",", "：", ":")
+        )
+        cut = preferred + 1 if preferred >= 0 else best
+        chunk = remaining[:cut].strip()
+        if chunk[-1:] not in "，,、：:；;。！？!?":
+            chunk += "，"
+        chunks.append(chunk)
+        remaining = remaining[cut:].strip()
+    return chunks
+
+
+def split_kokoro_text(text, phoneme_count, max_phonemes=KOKORO_MAX_CHUNK_PHONEMES):
+    if max_phonemes <= 0 or max_phonemes >= KOKORO_HARD_PHONEME_LIMIT:
+        raise ValueError("Kokoro 分块音素上限必须在 1 到 509 之间")
+
+    pieces = re.findall(r"[^，,、：:；;。！？!?\n]+[，,、：:；;。！？!?]?|\n+", text)
+    expanded = []
+    for piece in pieces:
+        piece = piece.strip()
+        if not piece:
+            continue
+        expanded.extend(_split_piece_by_phonemes(piece, phoneme_count, max_phonemes))
+
+    chunks = []
+    current = ""
+    for piece in expanded:
+        candidate = current + piece
+        if current and phoneme_count(candidate) > max_phonemes:
+            chunks.append((current, _kokoro_pause_after(current), phoneme_count(current)))
+            current = piece
+        else:
+            current = candidate
+    if current:
+        chunks.append((current, _kokoro_pause_after(current), phoneme_count(current)))
+
+    if not chunks:
+        raise RuntimeError("Kokoro 没有可合成的文本分块")
+    if any(count > max_phonemes for _, _, count in chunks):
+        raise RuntimeError("Kokoro 文本分块超过安全音素上限")
+    return chunks
+
 
 class RawAlsaInputStream:
     def __init__(self, device: str, sample_rate: int, channels: int, frames_per_buffer: int):
@@ -515,29 +596,76 @@ class TourGuideAssistant:
         wav_path = Path(wav_path)
         wav_path.parent.mkdir(parents=True, exist_ok=True)
 
+        phoneme_counts = {}
+
+        def phoneme_count(value):
+            if value not in phoneme_counts:
+                phonemes, _ = self.kokoro_pipeline.g2p(value)
+                phoneme_counts[value] = len(phonemes)
+            return phoneme_counts[value]
+
+        chunks = split_kokoro_text(text, phoneme_count)
         audios = []
+        total_pause_seconds = 0.0
 
         with torch.inference_mode():
-            generator = self.kokoro_pipeline(
-                text,
-                voice=self.kokoro_voice,
-                speed=self.args.kokoro_speed,
-            )
-
-            for result in generator:
-                audio = self.extract_kokoro_audio(result)
-                if audio.size > 0:
-                    audios.append(audio)
+            for chunk_index, (chunk, pause_seconds, phonemes) in enumerate(chunks):
+                if phonemes >= KOKORO_HARD_PHONEME_LIMIT:
+                    raise RuntimeError("Kokoro 文本分块触及硬音素上限")
+                generator = self.kokoro_pipeline(
+                    chunk,
+                    voice=self.kokoro_voice,
+                    speed=self.args.kokoro_speed,
+                    split_pattern=None,
+                )
+                generated = 0
+                for result in generator:
+                    audio = self.extract_kokoro_audio(result)
+                    if audio.size > 0:
+                        if generated:
+                            audios.append(
+                                np.zeros(int(self.kokoro_sample_rate * 0.10), dtype=np.float32)
+                            )
+                            total_pause_seconds += 0.10
+                        audios.append(audio)
+                        generated += 1
+                if generated == 0:
+                    raise RuntimeError("Kokoro 文本分块没有生成音频")
+                if chunk_index < len(chunks) - 1:
+                    audios.append(
+                        np.zeros(
+                            int(self.kokoro_sample_rate * pause_seconds),
+                            dtype=np.float32,
+                        )
+                    )
+                    total_pause_seconds += pause_seconds
 
         if not audios:
             raise RuntimeError("Kokoro 没有生成音频")
 
         audio = np.concatenate(audios, axis=0)
         sf.write(str(wav_path), audio, self.kokoro_sample_rate)
+        logger.info(
+            "Kokoro 合成分块完成：chars=%s chunks=%s max_phonemes=%s "
+            "pause_seconds=%.3f samples=%s",
+            len(text),
+            len(chunks),
+            max(count for _, _, count in chunks),
+            total_pause_seconds,
+            audio.size,
+        )
+        print(
+            "[tts] synthesis_ready "
+            f"chars={len(text)} chunks={len(chunks)} "
+            f"max_phonemes={max(count for _, _, count in chunks)} "
+            f"pause_seconds={total_pause_seconds:.3f} samples={audio.size}",
+            flush=True,
+        )
 
     def guide_wav_path(self, index: int, text: str) -> Path:
         cache_identity = "|".join(
             (
+                KOKORO_CACHE_VERSION,
                 self.kokoro_repo_id,
                 self.kokoro_voice,
                 str(self.args.kokoro_speed),

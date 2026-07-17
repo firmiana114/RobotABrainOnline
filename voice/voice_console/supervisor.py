@@ -26,6 +26,7 @@ ROUTE_LINE = re.compile(r"^\[route\]\s+(\d+)/(\d+)\s+->\s+(.+)$")
 POST_WAIT_LINE = re.compile(r"^\[route\] post-wait (start|complete) seconds=([0-9.]+)$")
 STARTUP_LINE = re.compile(r"^\[startup\]\s+([a-z_]+)\s+(.+)$")
 CONTROL_LINE = re.compile(r"^\[control\]\s+([a-z_]+)(?:\s+.*)?$")
+TTS_LINE = re.compile(r"^\[tts\]\s+([a-z_]+)\s+(.+)$")
 SAFE_NAV_LINE = re.compile(r"\[(?:nav_status|goal|arm)\]")
 SENSITIVE_MARKERS = ("用户问题", "识别", "Qwen", "导览:", "等待你说完", "正在听你说话")
 
@@ -160,6 +161,14 @@ class TourSupervisor:
                 "导览启动阶段：stage=%s metrics=%s",
                 startup.group(1),
                 startup.group(2)[:300],
+            )
+            return
+        tts = TTS_LINE.match(line)
+        if tts:
+            logger.info(
+                "Kokoro 合成诊断：event=%s metrics=%s",
+                tts.group(1),
+                tts.group(2)[:300],
             )
             return
         control = CONTROL_LINE.match(line)
