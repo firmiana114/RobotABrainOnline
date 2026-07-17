@@ -13,13 +13,18 @@ import tempfile
 import threading
 import time
 
-from .config import ConsoleConfig, DEFAULT_KOKORO_VOICE
+from .config import (
+    ConsoleConfig,
+    DEFAULT_KOKORO_REPO_ID,
+    DEFAULT_KOKORO_VOICE,
+)
 from .dialogue import DialogueStore
 
 
 logger = logging.getLogger(__name__)
 ROUTE_LINE = re.compile(r"^\[route\]\s+(\d+)/(\d+)\s+->\s+(.+)$")
 POST_WAIT_LINE = re.compile(r"^\[route\] post-wait (start|complete) seconds=([0-9.]+)$")
+STARTUP_LINE = re.compile(r"^\[startup\]\s+([a-z_]+)\s+(.+)$")
 SAFE_NAV_LINE = re.compile(r"\[(?:nav_status|goal|arm)\]")
 SENSITIVE_MARKERS = ("用户问题", "识别", "Qwen", "导览:", "等待你说完", "正在听你说话")
 
@@ -90,6 +95,8 @@ class TourSupervisor:
             os.environ.get("STT_SAMPLE_RATE", "16000"),
             "--qwen-model",
             os.environ.get("QWEN_MODEL", "qwen-plus"),
+            "--kokoro-repo-id",
+            os.environ.get("KOKORO_REPO_ID", DEFAULT_KOKORO_REPO_ID),
             "--kokoro-voice",
             os.environ.get("KOKORO_VOICE", DEFAULT_KOKORO_VOICE),
             "--speaker-name",
@@ -140,6 +147,14 @@ class TourSupervisor:
         if "[route] finished" in line:
             self._write_status(status="completed", next_site=None, speech_state="未在监听")
             logger.info("导览路线执行完成")
+            return
+        startup = STARTUP_LINE.match(line)
+        if startup:
+            logger.info(
+                "导览启动阶段：stage=%s metrics=%s",
+                startup.group(1),
+                startup.group(2)[:300],
+            )
             return
         post_wait = POST_WAIT_LINE.match(line)
         if post_wait:

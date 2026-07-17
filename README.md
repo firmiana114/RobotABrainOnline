@@ -11,7 +11,7 @@ RobotABrainOnline 是 Unitree G1 的在线导览项目，整合 ROS 2 Humble 导
 - 机器人通信网卡：默认 `eth0`
 - 正式路线配置：`voice/conf/dialogue_0.json`
 - 运行时私密配置：`voice/runtime/voice.env`
-- 默认 Kokoro 音色：`zm_009`（官方中文男性音色文件排序中的第一个）
+- 默认 Kokoro 模型与音色：`hexgrad/Kokoro-82M` / `zm_yunxi`
 
 正式导览由以下五个 systemd 服务组成：
 
@@ -131,6 +131,8 @@ journalctl -b -u voice-arm-control.service --no-pager
 journalctl -b -u voice-arm-bridge.service --no-pager
 journalctl -b -u voice-control-console.service --no-pager
 ```
+
+导览进程每次启动都会重新导入 Torch/Kokoro、把模型加载到 CUDA、初始化 Pipeline 并执行首次推理预热。旧模型实测约 18 秒，当前 `Kokoro-82M / zm_yunxi` 在缓存完备后的离线冷进程实测约 13.25 秒，随后才启动 STT 并检查导航订阅者。日志中的 `导览启动阶段` 会分别记录 `voice_ready`、`stt_ready` 和 `nav_subscriber_ready` 耗时；这是当前进程生命周期设计的启动成本，不代表导航目标正在执行。
 
 日志中不应粘贴或记录 API Key、完整识别文本、完整问题内容或大体积音频数据。
 

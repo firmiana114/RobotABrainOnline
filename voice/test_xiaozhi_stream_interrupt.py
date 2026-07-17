@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 
 from tour_guide_xiaozhi_interrupt_resume import TourGuideAssistant, clean_tts_text
-from voice_console.config import DEFAULT_KOKORO_VOICE
+from voice_console.config import DEFAULT_KOKORO_REPO_ID, DEFAULT_KOKORO_VOICE
 
 
 DEFAULT_GUIDE_TEXT = [
@@ -250,7 +250,7 @@ def build_parser():
     parser.add_argument("--max-answer-sentences", type=int, default=4)
     parser.add_argument("--max-speak-chars", type=int, default=220)
     parser.add_argument("--enable-search", action="store_true")
-    parser.add_argument("--kokoro-repo-id", default="hexgrad/Kokoro-82M-v1.1-zh")
+    parser.add_argument("--kokoro-repo-id", default=DEFAULT_KOKORO_REPO_ID)
     parser.add_argument("--kokoro-voice", default=DEFAULT_KOKORO_VOICE)
     parser.add_argument("--kokoro-speed", type=float, default=1.0)
     parser.add_argument("--max-sentence-silence", type=int, default=700)

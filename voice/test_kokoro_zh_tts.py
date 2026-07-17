@@ -7,9 +7,9 @@ import soundfile as sf
 import torch
 from kokoro import KModel, KPipeline
 
-from voice_console.config import DEFAULT_KOKORO_VOICE
+from voice_console.config import DEFAULT_KOKORO_REPO_ID, DEFAULT_KOKORO_VOICE
 
-REPO_ID = "hexgrad/Kokoro-82M-v1.1-zh"
+REPO_ID = DEFAULT_KOKORO_REPO_ID
 SAMPLE_RATE = 24000
 VOICE = DEFAULT_KOKORO_VOICE
 

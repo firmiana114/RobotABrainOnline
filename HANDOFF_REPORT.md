@@ -88,11 +88,18 @@ docker run --rm unitree_slam_example_new:humble check
 
 ## Kokoro 男性音色
 
-- Kokoro v1.1-zh 官方仓库包含 55 个 `zf_*` 中文女声和 45 个 `zm_*` 中文男声，但没有年龄或风格标签。
-- 先前使用同一句中文导览词在 NX CUDA 上抽样比较 12 个男声，并曾选择低沉稳定的 `zm_029`；官方 45 个 `zm_*` 文件按名称排序从 `zm_009.pt` 开始，现按现场要求改为第一个男性音色 `zm_009`。
-- `voice_console.config.DEFAULT_KOKORO_VOICE` 统一设为 `zm_009`；导览 supervisor 显式传入 `--kokoro-voice`，并允许通过 `KOKORO_VOICE` 环境变量覆盖。
-- 导览 WAV 缓存键包含模型、voice、语速和文本，旧 `zf_001`、`zm_029` 缓存不会被新音色误用；新增运行时 WAV 已加入忽略规则，已有预生成缓存仍由 Git 保留。
-- NX 离线模型缓存已补齐 `zm_009.pt`，并在 `HF_HUB_OFFLINE=1` 下完成 CUDA 内存合成验证（48,000 个采样点）；未落盘或播放音频，也未启动正式导览或机器人节点。
+- 当前默认模型与音色为官方 `hexgrad/Kokoro-82M` / `zm_yunxi`；`zm_yunxi` 不属于先前的 `Kokoro-82M-v1.1-zh` 数字编号音色，因此切换时必须同时更换 repo 和 voice。
+- `voice_console.config` 统一维护默认 repo 和 voice；导览 supervisor 显式传入两者，并允许分别通过 `KOKORO_REPO_ID`、`KOKORO_VOICE` 覆盖。
+- 导览 WAV 缓存键包含模型、voice、语速和文本，旧 `zf_001`、`zm_029`、`zm_009` 缓存不会被新音色误用；新增运行时 WAV 已加入忽略规则，已有预生成缓存仍由 Git 保留。
+- NX 离线缓存已补齐通用模型和 `zm_yunxi` 音色；CUDA 内存合成生成 56,400 个采样点，未落盘或播放音频，也未启动正式导览或机器人节点。
+
+## 导览启动耗时分析
+
+- 2026-07-17 最近两次正式导览从 systemd 启动到进入首点分别为约 19.44 秒和 19.79 秒；路线派生只占约 0.08 秒，首点 `opening` 跳过导航，桥当时已有 2 个目标订阅者。
+- NX 离线分段计时总计 18.00 秒：Torch/Kokoro 导入 4.16 秒、模型加载到 CUDA 3.88 秒、Pipeline 初始化 7.27 秒、首次推理预热 2.70 秒。当前每次启动都创建新导览进程，所以这笔成本会重复发生。
+- 切换并补齐 `Kokoro-82M / zm_yunxi` 缓存后，离线冷进程总计 13.25 秒：导入 4.08 秒、模型与 CUDA 3.90 秒、Pipeline 2.60 秒、预热 2.66 秒；预计比旧模型少约 4.75 秒，但仍无法消除进程级冷启动。
+- 新增 `[startup]` 阶段日志并由 supervisor 安全转录到 journal，分别记录 `voice_ready`、`stt_ready`、`nav_subscriber_ready` 的阶段和累计耗时，以及非敏感的 repo/voice；不记录识别或问题全文。
+- 本轮未改为常驻模型或并行启动。若要显著降低等待，需要单独设计常驻语音进程/模型复用和显存生命周期，并验证退出、重启及故障恢复。
 - 回归测试覆盖默认音色、环境变量覆盖和跨音色缓存隔离；本机全量为 `34 passed, 3 skipped`，NX Python 3.8 候选副本为 `37 passed`。
 
 ## 已验证事实

@@ -27,7 +27,7 @@ from kokoro import KModel, KPipeline
 from dashscope.audio.asr import Recognition, RecognitionCallback, RecognitionResult
 
 from voice_console.interrupt import play_audio_file
-from voice_console.config import DEFAULT_KOKORO_VOICE
+from voice_console.config import DEFAULT_KOKORO_REPO_ID, DEFAULT_KOKORO_VOICE
 
 
 TOUR_SENTENCES = [
@@ -1259,7 +1259,7 @@ def parse_args():
     parser.add_argument("--max-speak-chars", type=int, default=130)
     parser.add_argument("--enable-search", action="store_true")
 
-    parser.add_argument("--kokoro-repo-id", default="hexgrad/Kokoro-82M-v1.1-zh")
+    parser.add_argument("--kokoro-repo-id", default=DEFAULT_KOKORO_REPO_ID)
     parser.add_argument("--kokoro-voice", default=DEFAULT_KOKORO_VOICE)
     parser.add_argument("--kokoro-speed", type=float, default=1.0)
 

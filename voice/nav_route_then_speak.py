@@ -28,7 +28,7 @@ from voice_console.interrupt import (
     answer_with_fallback,
     run_interruptible_segment,
 )
-from voice_console.config import DEFAULT_KOKORO_VOICE
+from voice_console.config import DEFAULT_KOKORO_REPO_ID, DEFAULT_KOKORO_VOICE
 
 
 ARRIVED = {"arrived", "mid_arrived"}
@@ -889,7 +889,7 @@ def build_parser():
     parser.add_argument("--max-qwen-tokens", type=int, default=160)
     parser.add_argument("--max-speak-chars", type=int, default=130)
     parser.add_argument("--max-answer-sentences", type=int, default=3)
-    parser.add_argument("--kokoro-repo-id", default="hexgrad/Kokoro-82M-v1.1-zh")
+    parser.add_argument("--kokoro-repo-id", default=DEFAULT_KOKORO_REPO_ID)
     parser.add_argument("--kokoro-voice", default=DEFAULT_KOKORO_VOICE)
     parser.add_argument("--kokoro-speed", type=float, default=1.0)
     parser.add_argument("--kokoro-device", default="cuda")
@@ -902,21 +902,38 @@ def build_parser():
 
 
 def main():
+    startup_started = time.perf_counter()
     args = build_parser().parse_args()
     base_dir = Path(args.route_file).resolve().parent
     route = load_route(args.route_file)
     action_aliases = parse_action_aliases(args.action_alias)
     args.qa_context_text = load_qa_context(args.qa_context_file, args.qa_context_max_chars)
 
+    stage_started = time.perf_counter()
     voice_app, stt = init_voice(args)
+    print(
+        "[startup] voice_ready "
+        f"elapsed_seconds={time.perf_counter() - stage_started:.3f} "
+        f"total_seconds={time.perf_counter() - startup_started:.3f} "
+        f"repo={args.kokoro_repo_id} voice={args.kokoro_voice}",
+        flush=True,
+    )
     stt_enabled = False
     qa_stop = threading.Event()
+    stage_started = time.perf_counter()
     try:
         stt.start()
         stt_enabled = True
     except Exception as exc:
         print("[voice] failed to start arecord STT:", repr(exc), flush=True)
         print("[voice] continue in playback-only mode.", flush=True)
+    print(
+        "[startup] stt_ready "
+        f"elapsed_seconds={time.perf_counter() - stage_started:.3f} "
+        f"total_seconds={time.perf_counter() - startup_started:.3f} "
+        f"enabled={str(stt_enabled).lower()}",
+        flush=True,
+    )
     if stt_enabled:
         threading.Thread(target=background_question_loop, args=(voice_app, qa_stop), daemon=True).start()
 
@@ -939,8 +956,15 @@ def main():
     try:
         node.get_logger().info("[arm] action requests will use the Humble HTTP bridge")
 
+        stage_started = time.perf_counter()
         if not node.wait_for_nav_subscriber(args.publisher_wait):
             raise RuntimeError("no subscriber on /go_goal_pose; start goGoalNavigation66 first")
+        print(
+            "[startup] nav_subscriber_ready "
+            f"elapsed_seconds={time.perf_counter() - stage_started:.3f} "
+            f"total_seconds={time.perf_counter() - startup_started:.3f}",
+            flush=True,
+        )
 
         for index, item in enumerate(route, start=1):
             name = item.get("name") or f"point_{index}"

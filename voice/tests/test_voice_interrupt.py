@@ -416,12 +416,12 @@ def test_guide_cache_key_changes_with_kokoro_voice(tmp_path: Path):
     guide = pytest.importorskip("tour_guide_xiaozhi_interrupt_resume")
     assistant = object.__new__(guide.TourGuideAssistant)
     assistant.guide_cache_dir = tmp_path
-    assistant.kokoro_repo_id = "hexgrad/Kokoro-82M-v1.1-zh"
+    assistant.kokoro_repo_id = "hexgrad/Kokoro-82M"
     assistant.args = SimpleNamespace(kokoro_speed=1.0)
 
     assistant.kokoro_voice = "zf_001"
     female_path = assistant.guide_wav_path(1, "欢迎参观。")
-    assistant.kokoro_voice = "zm_009"
+    assistant.kokoro_voice = "zm_yunxi"
     male_path = assistant.guide_wav_path(1, "欢迎参观。")
 
     assert female_path != male_path
