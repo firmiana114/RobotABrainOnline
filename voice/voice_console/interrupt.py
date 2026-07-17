@@ -318,8 +318,9 @@ def run_interruptible_segment(
     question_timeout: float = 1.2,
     question_settle_time: float = 0.35,
     sleep: Callable[[float], None] = time.sleep,
+    cancelled: Callable[[], bool] = lambda: False,
 ) -> None:
-    while app.running:
+    while app.running and not cancelled():
         attempt_id = coordinator.begin_attempt(index)
         try:
             player_interrupted = app.play_guide_sentence(index, text)
@@ -327,6 +328,12 @@ def run_interruptible_segment(
         except Exception:
             coordinator.abort_attempt(attempt_id)
             raise
+        if cancelled():
+            if session_id is not None:
+                coordinator.complete_interrupt(session_id)
+            app.stop_guide_event.clear()
+            app.set_mode("idle")
+            return
         if session_id is None:
             app.set_mode("idle")
             return
@@ -337,6 +344,8 @@ def run_interruptible_segment(
                 timeout=question_timeout,
                 settle_time=question_settle_time,
             )
+            if cancelled():
+                return
             if is_resume(question):
                 logger.info("收到继续导览指令：session=%s", session_id)
             elif question:
@@ -347,6 +356,8 @@ def run_interruptible_segment(
             coordinator.complete_interrupt(session_id)
             app.stop_guide_event.clear()
             app.set_mode("idle")
+        if cancelled():
+            return
         sleep(app.args.resume_delay)
 
 

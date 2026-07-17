@@ -29,6 +29,7 @@ from voice_console.interrupt import (
     run_interruptible_segment,
 )
 from voice_console.config import DEFAULT_KOKORO_REPO_ID, DEFAULT_KOKORO_VOICE
+from voice_console.tour_control import TourControlServer, TourTaskController
 
 
 ARRIVED = {"arrived", "mid_arrived"}
@@ -37,6 +38,10 @@ clean_api_key = None
 clean_tts_text = None
 logger = logging.getLogger("voice_route")
 INTERRUPT_RESUME_NOTICE = "如果没有别的问题，我将继续导览。"
+
+
+class TourCancelled(RuntimeError):
+    pass
 
 
 def load_route(path):
@@ -298,6 +303,8 @@ class RouteSTTCallback(RecognitionCallback):
             return
         text = (sentence.get("text") or "").strip()
         if not text:
+            return
+        if not getattr(self.app, "route_task_active", True):
             return
 
         mode, _, _ = self.app.get_mode()
@@ -683,7 +690,8 @@ def init_voice(args):
     return app, stt
 
 
-def speak_with_interrupt_resume(app, text, index):
+def speak_with_interrupt_resume(app, text, index, cancel_event=None):
+    cancelled = cancel_event.is_set if cancel_event is not None else lambda: False
     run_interruptible_segment(
         app,
         app.route_interrupts,
@@ -693,13 +701,14 @@ def speak_with_interrupt_resume(app, text, index):
             app, question, announce_resume=True
         ),
         is_resume=is_resume_command,
+        cancelled=cancelled,
     )
 
 
 def speak_playback_only(app, text, index):
     wav_path = app.ensure_guide_wav(index, text)
     print("[voice] playback-only mode, playing without wake-word interrupt.", flush=True)
-    app.play_wav(wav_path, interruptible=False)
+    app.play_wav(wav_path, interruptible=True)
 
 
 def is_resume_command(text):
@@ -749,20 +758,30 @@ def background_question_loop(app, stop_event):
             app.route_interrupts.idle_task_done()
 
 
-def speak_segment(app, node, segment, index, stt_enabled, action_aliases):
+def speak_segment(app, node, segment, index, stt_enabled, action_aliases, cancel_event=None):
     text = segment["text"]
     action = resolve_action_name(segment.get("action"), action_aliases)
+    cancel_event = cancel_event or getattr(app, "route_cancel_event", None)
+
+    if cancel_event is not None and cancel_event.is_set():
+        raise TourCancelled("tour task stopped before segment")
 
     with app.route_voice_lock:
         if action and segment.get("speak_with_action", True):
             print(f"[route] segment action={action} text={text[:30]}", flush=True)
             node.send_arm_action(action)
-            time.sleep(0.15)
+            if cancel_event is not None and cancel_event.wait(0.15):
+                raise TourCancelled("tour task stopped after arm action")
+            if cancel_event is None:
+                time.sleep(0.15)
 
         if stt_enabled:
-            speak_with_interrupt_resume(app, text, index)
+            speak_with_interrupt_resume(app, text, index, cancel_event=cancel_event)
         else:
             speak_playback_only(app, text, index)
+
+    if cancel_event is not None and cancel_event.is_set():
+        raise TourCancelled("tour task stopped during segment")
 
 class RouteNode:
     def __init__(self, bridge_url):
@@ -794,9 +813,11 @@ class RouteNode:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             return json.loads(response.read().decode("utf-8"))
 
-    def wait_for_nav_subscriber(self, timeout):
+    def wait_for_nav_subscriber(self, timeout, cancel_event=None):
         deadline = time.time() + timeout
         while time.time() < deadline:
+            if cancel_event is not None and cancel_event.is_set():
+                raise TourCancelled("tour task stopped while waiting for navigation subscriber")
             try:
                 if int(self._request("/nav_state").get("goal_subscribers", 0)) > 0:
                     return True
@@ -836,9 +857,11 @@ class RouteNode:
             self.logger.error("[arm] bridge send failed action=%s error_type=%s", action_name, type(exc).__name__)
             return False
 
-    def wait_arrived(self, timeout):
+    def wait_arrived(self, timeout, cancel_event=None):
         deadline = time.time() + timeout
         while time.time() < deadline:
+            if cancel_event is not None and cancel_event.is_set():
+                raise TourCancelled("tour task stopped while waiting for navigation")
             state = self._request("/nav_state")
             sequence = int(state.get("status_seq", 0))
             status = str(state.get("nav_status", "")).strip()
@@ -898,15 +921,85 @@ def build_parser():
     parser.add_argument("--action-alias", default="")
     parser.add_argument("--qa-context-file", default="")
     parser.add_argument("--qa-context-max-chars", type=int, default=12000)
+    parser.add_argument("--standby-control", action="store_true")
+    parser.add_argument("--control-host", default="127.0.0.1")
+    parser.add_argument("--control-port", type=int, default=8766)
     return parser
+
+
+def execute_route_once(args, voice_app, node, stt_enabled, cancel_event):
+    base_dir = Path(args.route_file).resolve().parent
+    route = load_route(args.route_file)
+    action_aliases = parse_action_aliases(args.action_alias)
+    args.qa_context_text = load_qa_context(args.qa_context_file, args.qa_context_max_chars)
+    voice_app.args.qa_context_text = args.qa_context_text
+
+    stage_started = time.perf_counter()
+    if not node.wait_for_nav_subscriber(args.publisher_wait, cancel_event=cancel_event):
+        raise RuntimeError("no subscriber on /go_goal_pose; start goGoalNavigation66 first")
+    print(
+        "[startup] nav_subscriber_ready "
+        f"elapsed_seconds={time.perf_counter() - stage_started:.3f}",
+        flush=True,
+    )
+
+    for index, item in enumerate(route, start=1):
+        if cancel_event.is_set():
+            raise TourCancelled("tour task stopped before route point")
+        name = item.get("name") or f"point_{index}"
+        segments = load_speech_segments(item, base_dir)
+
+        print(f"\n[route] {index}/{len(route)} -> {name}", flush=True)
+        if item.get("skip_navigation"):
+            print(f"[route] {name} skips navigation", flush=True)
+        else:
+            goal = normalize_goal(item)
+            node.publish_goal(goal)
+            status = node.wait_arrived(args.goal_timeout, cancel_event=cancel_event)
+            print(f"[route] arrived at {name}: {status}", flush=True)
+
+        if segments:
+            for seg_index, segment in enumerate(segments):
+                if cancel_event.is_set():
+                    raise TourCancelled("tour task stopped before speech segment")
+                speak_index = (index - 1) * 100 + seg_index
+                speak_segment(
+                    voice_app,
+                    node,
+                    segment,
+                    speak_index,
+                    stt_enabled,
+                    action_aliases,
+                    cancel_event=cancel_event,
+                )
+        else:
+            print(f"[route] {name} has no speech, skip speaking", flush=True)
+
+    print("[route] finished", flush=True)
+
+
+def precache_route_audio(args, voice_app):
+    route = load_route(args.route_file)
+    base_dir = Path(args.route_file).resolve().parent
+    total = 0
+    generated = 0
+    for index, item in enumerate(route, start=1):
+        for seg_index, segment in enumerate(load_speech_segments(item, base_dir)):
+            speak_index = (index - 1) * 100 + seg_index
+            wav_path = voice_app.guide_wav_path(speak_index, segment["text"])
+            cached = wav_path.exists() and wav_path.stat().st_size > 1000
+            voice_app.ensure_guide_wav(speak_index, segment["text"])
+            total += 1
+            if not cached:
+                generated += 1
+    return total, generated
 
 
 def main():
     startup_started = time.perf_counter()
     args = build_parser().parse_args()
-    base_dir = Path(args.route_file).resolve().parent
-    route = load_route(args.route_file)
-    action_aliases = parse_action_aliases(args.action_alias)
+    load_route(args.route_file)
+    parse_action_aliases(args.action_alias)
     args.qa_context_text = load_qa_context(args.qa_context_file, args.qa_context_max_chars)
 
     stage_started = time.perf_counter()
@@ -916,6 +1009,15 @@ def main():
         f"elapsed_seconds={time.perf_counter() - stage_started:.3f} "
         f"total_seconds={time.perf_counter() - startup_started:.3f} "
         f"repo={args.kokoro_repo_id} voice={args.kokoro_voice}",
+        flush=True,
+    )
+    stage_started = time.perf_counter()
+    cached_segments, generated_segments = precache_route_audio(args, voice_app)
+    print(
+        "[startup] guide_cache_ready "
+        f"elapsed_seconds={time.perf_counter() - stage_started:.3f} "
+        f"total_seconds={time.perf_counter() - startup_started:.3f} "
+        f"segments={cached_segments} generated={generated_segments}",
         flush=True,
     )
     stt_enabled = False
@@ -937,27 +1039,31 @@ def main():
     if stt_enabled:
         threading.Thread(target=background_question_loop, args=(voice_app, qa_stop), daemon=True).start()
 
-    def stop(_sig, _frame):
-        print("\n收到退出信号，正在停止...")
-        qa_stop.set()
-        if stt_enabled:
-            stt.stop()
-        voice_app.stop()
-        sys.exit(0)
-
-    signal.signal(signal.SIGINT, stop)
-    signal.signal(signal.SIGTERM, stop)
-
     nav_bridge_url = os.environ.get("NAV_BRIDGE_URL", "").strip()
     if not nav_bridge_url:
         raise RuntimeError("NAV_BRIDGE_URL is required; all ROS access must use the Humble bridge")
     node = RouteNode(nav_bridge_url)
+    controller = TourTaskController(stop_playback=voice_app.stop_guide_event.set)
+    voice_app.route_cancel_event = controller.cancel_event
+    voice_app.route_task_active = False
+    control_server = None
+    control_thread = None
+
+    def stop(_sig, _frame):
+        print("\n收到退出信号，正在关闭常驻导览服务...", flush=True)
+        controller.request_shutdown()
+
+    signal.signal(signal.SIGINT, stop)
+    signal.signal(signal.SIGTERM, stop)
 
     try:
         node.get_logger().info("[arm] action requests will use the Humble HTTP bridge")
 
         stage_started = time.perf_counter()
-        if not node.wait_for_nav_subscriber(args.publisher_wait):
+        if not node.wait_for_nav_subscriber(
+            args.publisher_wait,
+            cancel_event=controller.cancel_event,
+        ):
             raise RuntimeError("no subscriber on /go_goal_pose; start goGoalNavigation66 first")
         print(
             "[startup] nav_subscriber_ready "
@@ -965,30 +1071,68 @@ def main():
             f"total_seconds={time.perf_counter() - startup_started:.3f}",
             flush=True,
         )
+        if not args.standby_control:
+            voice_app.route_task_active = True
+            execute_route_once(args, voice_app, node, stt_enabled, controller.cancel_event)
+            return
 
-        for index, item in enumerate(route, start=1):
-            name = item.get("name") or f"point_{index}"
-            segments = load_speech_segments(item, base_dir)
+        control_server = TourControlServer(
+            (args.control_host, args.control_port),
+            controller,
+        )
+        control_thread = threading.Thread(target=control_server.serve_forever, daemon=True)
+        control_thread.start()
+        controller.mark_ready()
+        print(
+            f"[control] ready host={args.control_host} port={args.control_port}",
+            flush=True,
+        )
 
-            print(f"\n[route] {index}/{len(route)} -> {name}", flush=True)
-            if item.get("skip_navigation"):
-                print(f"[route] {name} skips navigation", flush=True)
-            else:
-                goal = normalize_goal(item)
-                node.publish_goal(goal)
-                status = node.wait_arrived(args.goal_timeout)
-                print(f"[route] arrived at {name}: {status}", flush=True)
+        while not controller.shutdown_event.is_set():
+            if not controller.wait_for_start(timeout=0.5):
+                continue
+            if controller.shutdown_event.is_set():
+                break
+            if controller.cancel_event.is_set():
+                controller.mark_finished("stopped")
+                print("[control] tour_stopped", flush=True)
+                continue
 
-            if segments:
-                for seg_index, segment in enumerate(segments):
-                    speak_index = (index - 1) * 100 + seg_index
-                    speak_segment(voice_app, node, segment, speak_index, stt_enabled, action_aliases)
-            else:
-                print(f"[route] {name} has no speech, skip speaking", flush=True)
-
-        print("[route] finished", flush=True)
+            controller.mark_running()
+            voice_app.route_task_active = True
+            voice_app.stop_guide_event.clear()
+            print("[control] tour_started", flush=True)
+            outcome = "completed"
+            try:
+                execute_route_once(
+                    args,
+                    voice_app,
+                    node,
+                    stt_enabled,
+                    controller.cancel_event,
+                )
+            except TourCancelled:
+                outcome = "stopped"
+            except Exception as exc:
+                outcome = "failed"
+                logger.exception(
+                    "导览任务执行失败：error_type=%s",
+                    type(exc).__name__,
+                )
+            finally:
+                voice_app.route_task_active = False
+                voice_app.stop_guide_event.clear()
+                voice_app.set_mode("idle")
+                controller.mark_finished(outcome)
+                print(f"[control] tour_{outcome}", flush=True)
     finally:
+        controller.request_shutdown()
         qa_stop.set()
+        if control_server is not None:
+            control_server.shutdown()
+            control_server.server_close()
+        if control_thread is not None:
+            control_thread.join(timeout=2.0)
         if stt_enabled:
             stt.stop()
         voice_app.stop()

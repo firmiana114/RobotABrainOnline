@@ -24,6 +24,7 @@ class ConsoleConfig:
     navigation_service: str
     arm_service: str
     tour_service: str
+    tour_control_url: str
     systemctl_path: Path
     sudo_path: Path | None
     pose_stale_seconds: float
@@ -50,6 +51,7 @@ class ConsoleConfig:
             navigation_service=os.environ.get("VOICE_NAVIGATION_SERVICE", "voice-navigation.service"),
             arm_service=os.environ.get("VOICE_ARM_SERVICE", "voice-arm-control.service"),
             tour_service=os.environ.get("VOICE_TOUR_SERVICE", "voice-tour-guide.service"),
+            tour_control_url=os.environ.get("VOICE_TOUR_CONTROL_URL", "http://127.0.0.1:8766"),
             systemctl_path=Path(os.environ.get("VOICE_SYSTEMCTL_PATH", "/usr/bin/systemctl")),
             sudo_path=Path(sudo_value) if sudo_value else None,
             pose_stale_seconds=float(os.environ.get("VOICE_POSE_STALE_SECONDS", "5")),

@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 ROUTE_LINE = re.compile(r"^\[route\]\s+(\d+)/(\d+)\s+->\s+(.+)$")
 POST_WAIT_LINE = re.compile(r"^\[route\] post-wait (start|complete) seconds=([0-9.]+)$")
 STARTUP_LINE = re.compile(r"^\[startup\]\s+([a-z_]+)\s+(.+)$")
+CONTROL_LINE = re.compile(r"^\[control\]\s+([a-z_]+)(?:\s+.*)?$")
 SAFE_NAV_LINE = re.compile(r"\[(?:nav_status|goal|arm)\]")
 SENSITIVE_MARKERS = ("用户问题", "识别", "Qwen", "导览:", "等待你说完", "正在听你说话")
 
@@ -37,12 +38,12 @@ class TourSupervisor:
         self.stop_event = threading.Event()
         self.status = {
             "active": True,
-            "status": "starting",
+            "status": "preparing",
             "current_site": None,
             "next_site": None,
             "current_index": 0,
             "total_points": 0,
-            "speech_state": "启动中",
+            "speech_state": "预热中",
             "updated_at": self._now(),
         }
         self.route_names: list[str] = []
@@ -103,6 +104,11 @@ class TourSupervisor:
             os.environ.get("SPEAKER_NAME", "REDMI Speaker 2-6002"),
             "--qa-context-file",
             str(self.config.qa_context_file),
+            "--standby-control",
+            "--control-host",
+            os.environ.get("TOUR_CONTROL_HOST", "127.0.0.1"),
+            "--control-port",
+            os.environ.get("TOUR_CONTROL_PORT", "8766"),
         ]
         if os.environ.get("ENABLE_SEARCH", "1") == "1":
             command.append("--enable-search")
@@ -156,6 +162,32 @@ class TourSupervisor:
                 startup.group(2)[:300],
             )
             return
+        control = CONTROL_LINE.match(line)
+        if control:
+            event = control.group(1)
+            if event == "ready":
+                self._write_status(status="ready", speech_state="已预热")
+            elif event == "tour_starting":
+                self._write_status(status="starting", speech_state="监听中")
+            elif event == "tour_started":
+                self._load_route_names()
+                self._write_status(
+                    status="running",
+                    current_index=0,
+                    current_site=None,
+                    next_site=self.route_names[0] if self.route_names else None,
+                    speech_state="监听中",
+                )
+            elif event == "tour_stopping":
+                self._write_status(status="stopping", speech_state="正在关闭")
+            elif event == "tour_stopped":
+                self._write_status(status="stopped", speech_state="已预热")
+            elif event == "tour_completed":
+                self._write_status(status="completed", next_site=None, speech_state="已预热")
+            elif event == "tour_failed":
+                self._write_status(status="failed", speech_state="导览异常")
+            logger.info("导览控制事件：event=%s", event)
+            return
         post_wait = POST_WAIT_LINE.match(line)
         if post_wait:
             logger.info("导览台词等待：phase=%s seconds=%s", post_wait.group(1), post_wait.group(2))
@@ -201,7 +233,7 @@ class TourSupervisor:
             bufsize=1,
             start_new_session=True,
         )
-        self._write_status(status="running", speech_state="监听中")
+        self._write_status(status="preparing", speech_state="预热中")
         assert self.process.stdout is not None
         for line in self.process.stdout:
             self._handle_line(line)
@@ -210,7 +242,7 @@ class TourSupervisor:
         except subprocess.TimeoutExpired:
             os.killpg(self.process.pid, signal.SIGKILL)
             return_code = self.process.wait(timeout=5)
-        final_status = "stopped" if self.stop_event.is_set() else ("completed" if return_code == 0 else "failed")
+        final_status = "service_stopped" if self.stop_event.is_set() else "failed"
         self._write_status(active=False, status=final_status, speech_state="未在监听", exit_code=return_code)
         logger.info("导览子进程退出：returncode=%s status=%s", return_code, final_status)
         return return_code

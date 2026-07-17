@@ -25,6 +25,7 @@ def config_and_store(tmp_path: Path):
         navigation_service="voice-navigation.service",
         arm_service="voice-arm-control.service",
         tour_service="voice-tour-guide.service",
+        tour_control_url="http://127.0.0.1:8766",
         systemctl_path=Path("/usr/bin/systemctl"),
         sudo_path=Path("/usr/bin/sudo"),
         pose_stale_seconds=5.0,

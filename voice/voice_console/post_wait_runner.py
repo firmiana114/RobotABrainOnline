@@ -11,7 +11,11 @@ from typing import Callable
 from .dialogue import _normalize_post_wait_seconds
 
 
-def wait_after_segment(segment: object, sleep: Callable[[float], None] = time.sleep) -> float:
+def wait_after_segment(
+    segment: object,
+    sleep: Callable[[float], None] = time.sleep,
+    cancelled: Callable[[], bool] = lambda: False,
+) -> float:
     if not isinstance(segment, dict) or "post_wait_seconds" not in segment:
         return 0.0
     seconds = float(_normalize_post_wait_seconds(segment["post_wait_seconds"], "导览台词段"))
@@ -19,6 +23,9 @@ def wait_after_segment(segment: object, sleep: Callable[[float], None] = time.sl
         return 0.0
     print(f"[route] post-wait start seconds={seconds:g}", flush=True)
     sleep(seconds)
+    if cancelled():
+        print("[route] post-wait cancelled", flush=True)
+        return 0.0
     print(f"[route] post-wait complete seconds={seconds:g}", flush=True)
     return seconds
 
@@ -43,9 +50,38 @@ def main() -> None:
     module = _load_navigation_module(Path(options.navigation_script))
     original_speak_segment = module.speak_segment
 
-    def speak_segment_with_wait(app, node, segment, index, stt_enabled, action_aliases):
-        original_speak_segment(app, node, segment, index, stt_enabled, action_aliases)
-        wait_after_segment(segment)
+    def speak_segment_with_wait(
+        app,
+        node,
+        segment,
+        index,
+        stt_enabled,
+        action_aliases,
+        cancel_event=None,
+    ):
+        if cancel_event is None:
+            original_speak_segment(app, node, segment, index, stt_enabled, action_aliases)
+            cancel_event = getattr(app, "route_cancel_event", None)
+        else:
+            original_speak_segment(
+                app,
+                node,
+                segment,
+                index,
+                stt_enabled,
+                action_aliases,
+                cancel_event=cancel_event,
+            )
+        if cancel_event is None:
+            wait_after_segment(segment)
+            return
+        wait_after_segment(
+            segment,
+            sleep=cancel_event.wait,
+            cancelled=cancel_event.is_set,
+        )
+        if cancel_event.is_set():
+            raise module.TourCancelled("tour task stopped during post wait")
 
     module.speak_segment = speak_segment_with_wait
     sys.argv = [str(options.navigation_script), *remaining]

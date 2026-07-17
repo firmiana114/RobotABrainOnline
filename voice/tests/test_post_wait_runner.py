@@ -18,6 +18,23 @@ def test_wait_after_segment_skips_missing_or_zero_value():
     assert calls == []
 
 
+def test_wait_after_segment_can_be_cancelled_without_waiting_full_duration(capsys):
+    cancelled = False
+
+    def cancel(_seconds):
+        nonlocal cancelled
+        cancelled = True
+
+    result = wait_after_segment(
+        {"text": "观看视频", "post_wait_seconds": 277},
+        sleep=cancel,
+        cancelled=lambda: cancelled,
+    )
+
+    assert result == 0
+    assert "post-wait cancelled" in capsys.readouterr().out
+
+
 @pytest.mark.parametrize("value", [-1, 3601, True, "10", [10]])
 def test_wait_after_segment_rejects_invalid_value(value):
     with pytest.raises(DialogueError):
@@ -41,6 +58,28 @@ def test_runner_wraps_external_speak_segment(monkeypatch, tmp_path, capsys):
     assert "spoken" in output
     assert "post-wait start seconds=0.001" in output
     assert "post-wait complete seconds=0.001" in output
+
+
+def test_runner_forwards_task_cancel_event(monkeypatch, tmp_path, capsys):
+    script = tmp_path / "fake_route.py"
+    script.write_text(
+        "import threading\n"
+        "class TourCancelled(RuntimeError):\n"
+        "    pass\n"
+        "def speak_segment(*args, **kwargs):\n"
+        "    assert kwargs['cancel_event'] is args[0].route_cancel_event\n"
+        "    print('spoken-with-cancel', flush=True)\n"
+        "def main():\n"
+        "    app = type('App', (), {})()\n"
+        "    app.route_cancel_event = threading.Event()\n"
+        "    speak_segment(app, None, {'text': '继续'}, 0, False, {}, cancel_event=app.route_cancel_event)\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(sys, "argv", ["post_wait_runner", "--navigation-script", str(script)])
+
+    main()
+
+    assert "spoken-with-cancel" in capsys.readouterr().out
 
 
 def test_navigation_loader_preserves_post_wait_seconds(tmp_path):

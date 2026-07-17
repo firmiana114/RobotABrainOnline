@@ -21,7 +21,7 @@ RobotABrainOnline 是 Unitree G1 的在线导览项目，整合 ROS 2 Humble 导
 | `voice-arm-bridge.service` | 在 Humble 容器内提供导航、位姿和手臂 HTTP/ROS 桥 |
 | `voice-navigation.service` | 启动 `goGoalNavigation66` 导航节点 |
 | `voice-arm-control.service` | 启动 G1 手臂 Action Server |
-| `voice-tour-guide.service` | 执行正式路线、语音播报、唤醒打断和问答 |
+| `voice-tour-guide.service` | 常驻预热模型、路线语音、STT 和导航订阅；按需执行正式导览任务 |
 
 ## 启动前检查
 
@@ -73,9 +73,12 @@ http://<NX-IP>:8081
 
 1. 点击“启动导航”，等待导航状态正常。
 2. 点击“重启手臂控制”，等待手臂控制状态正常。
-3. 再次确认现场安全后，点击“开始导览”。
+3. 点击“重启导览服务”，等待导览任务状态显示“已预热”。这一步会重启 Python 进程，并完成 Kokoro/CUDA、整条路线语音缓存、STT 和导航订阅预热，不会开始路线或发送机器人动作。
+4. 再次确认现场安全后，点击“启动导览”。此按钮只启动已预热进程中的导览任务，不再重启 Python 进程。
 
-控制台只有在导航和手臂控制均已就绪时才允许开始导览。导览启动后会读取正式路线并发送真实导航目标，到达点位后执行配置的手臂动作和语音播报。
+控制台只有在导航、手臂控制和导览预热均已就绪时才允许启动导览。导览启动后会重新读取正式路线并发送真实导航目标，到达点位后执行配置的手臂动作和语音播报。“关闭导览”只停止当前导览任务并保留预热进程，因此下一次“启动导览”无需再次加载模型。
+
+修改路线文本、音色、模型或运行时语音配置后，应再次点击“重启导览服务”，使整条路线的语音缓存与新配置一致；否则任务启动时可能需要临时合成新增台词。
 
 ## 命令行启动
 
@@ -91,8 +94,15 @@ systemctl is-active voice-navigation.service
 sudo systemctl start voice-arm-control.service
 systemctl is-active voice-arm-control.service
 
-sudo systemctl start voice-tour-guide.service
+sudo systemctl restart voice-tour-guide.service
 systemctl is-active voice-tour-guide.service
+```
+
+等待本机控制接口返回 `ready` 或 `stopped` 后再启动任务：
+
+```bash
+curl -s http://127.0.0.1:8766/status
+curl -sS -X POST http://127.0.0.1:8766/start
 ```
 
 如需同时查看网页状态，再启动控制台：
@@ -101,7 +111,7 @@ systemctl is-active voice-tour-guide.service
 sudo systemctl start voice-control-console.service
 ```
 
-不要跳过导航和手臂控制直接启动 `voice-tour-guide.service`。该服务虽然会通过 `Requires=` 拉起 HTTP/ROS 桥，但不会自动启动导航和手臂节点；缺少 `/go_goal_pose` 订阅者时导览会启动失败，外部节点意外存在时则可能直接进入真实运动流程。
+不要跳过导航和手臂控制直接重启 `voice-tour-guide.service`。该服务虽然会通过 `Requires=` 拉起 HTTP/ROS 桥，但不会自动启动导航和手臂节点；缺少 `/go_goal_pose` 订阅者时预热会失败。`systemctl restart` 只建立常驻预热进程，只有控制接口的 `/start` 或网页“启动导览”才会开始真实运动流程。
 
 ## 查看状态和日志
 
@@ -132,13 +142,19 @@ journalctl -b -u voice-arm-bridge.service --no-pager
 journalctl -b -u voice-control-console.service --no-pager
 ```
 
-导览进程每次启动都会重新导入 Torch/Kokoro、把模型加载到 CUDA、初始化 Pipeline 并执行首次推理预热。旧模型实测约 18 秒，当前 `Kokoro-82M / zm_yunxi` 在缓存完备后的离线冷进程实测约 13.25 秒，随后才启动 STT 并检查导航订阅者。日志中的 `导览启动阶段` 会分别记录 `voice_ready`、`stt_ready` 和 `nav_subscriber_ready` 耗时；这是当前进程生命周期设计的启动成本，不代表导航目标正在执行。
+导览服务重启时会导入 Torch/Kokoro、把模型加载到 CUDA、初始化 Pipeline、执行首次推理，并预生成整条路线的语音缓存。旧模型冷启动实测约 18 秒，当前 `Kokoro-82M / zm_yunxi` 在缓存完备后的离线冷进程实测约 13.25 秒。日志中的 `[startup]` 会记录 `voice_ready`、`guide_cache_ready`、`stt_ready` 和 `nav_subscriber_ready` 的阶段与累计耗时；这些都发生在预热期，不会发送导航或手臂动作。状态进入“已预热”后，“启动导览”只触发任务，避免重复支付进程冷启动成本。
 
 日志中不应粘贴或记录 API Key、完整识别文本、完整问题内容或大体积音频数据。
 
 ## 停止正式导览
 
-正常停止时先关闭导览，再停止运动节点：
+正常停止时先通过网页“关闭导览”或本机接口停止当前任务；常驻预热进程会保留，之后可立即再次启动：
+
+```bash
+curl -sS -X POST http://127.0.0.1:8766/stop
+```
+
+确定不再使用正式导览时，再停止常驻服务和运动节点：
 
 ```bash
 sudo systemctl stop voice-tour-guide.service
@@ -162,6 +178,7 @@ sudo systemctl stop voice-control-console.service
 - 麦克风启动失败：检查 `arecord -l` 中是否存在 `Rx`，以及 `ALSA_INPUT_DEVICE`、通道数和采样率配置。
 - 扬声器播放失败：检查 `aplay -l` 中的 REDMI 设备，并查看导览日志里的设备名和 `aplay` 返回码。
 - 服务进入 `failed`：先通过 `journalctl -b -u <服务名>` 查明原因；修复后执行 `sudo systemctl reset-failed <服务名>` 再重新启动。
+- 导览服务为 `active` 但“启动导览”不可用：预热可能尚未完成；查看控制台任务状态或 `curl -s http://127.0.0.1:8766/status`，并检查 `[startup]` 日志。
 - 日志显示从旧目录或系统 Python 启动：当前脚本应直接使用 `voice/.venv/bin/python`；确认 NX 已同步到最新提交，避免加载迁移前虚拟环境中的硬编码路径。
 
 更完整的架构、验证记录和现场未验证事项见 [HANDOFF_REPORT.md](HANDOFF_REPORT.md)。

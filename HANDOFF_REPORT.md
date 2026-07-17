@@ -50,10 +50,10 @@
 ## systemd 服务与重要警告
 
 - 已安装 `voice-control-console`、`voice-arm-bridge`、`voice-navigation`、`voice-arm-control`、`voice-tour-guide` 五个 unit。
-- 截至本报告更新时，五个服务全部为 `disabled/inactive`，没有相关桥容器残留。
+- 2026-07-17 只读检查：五个服务均为 `disabled`；控制台、HTTP/ROS 桥、导航和手臂服务为 `active`，旧导览服务为 `failed`。本轮未改变这些运行状态。
 - **未经用户明确授权，不得启动、重启或 enable 任何上述服务，也不得执行真实导航、重定位或手臂动作。**
 - **不要直接运行 `voice/scripts/install_services.sh`：该脚本末尾包含 `systemctl enable --now voice-control-console.service voice-arm-bridge.service`，会启动服务。**
-- 只更新 unit 时应手动复制 `voice/deploy/systemd/*.service` 和 sudoers 文件，校验后仅执行 `systemctl daemon-reload`，再确认五个服务仍为 `disabled/inactive`。
+- 只更新 unit 时应手动复制对应 service 和 sudoers 文件，校验后执行 `systemctl daemon-reload`；不得擅自启动或 enable 服务。
 
 安全只读命令：
 
@@ -98,9 +98,11 @@ docker run --rm unitree_slam_example_new:humble check
 - 2026-07-17 最近两次正式导览从 systemd 启动到进入首点分别为约 19.44 秒和 19.79 秒；路线派生只占约 0.08 秒，首点 `opening` 跳过导航，桥当时已有 2 个目标订阅者。
 - NX 离线分段计时总计 18.00 秒：Torch/Kokoro 导入 4.16 秒、模型加载到 CUDA 3.88 秒、Pipeline 初始化 7.27 秒、首次推理预热 2.70 秒。当前每次启动都创建新导览进程，所以这笔成本会重复发生。
 - 切换并补齐 `Kokoro-82M / zm_yunxi` 缓存后，离线冷进程总计 13.25 秒：导入 4.08 秒、模型与 CUDA 3.90 秒、Pipeline 2.60 秒、预热 2.66 秒；预计比旧模型少约 4.75 秒，但仍无法消除进程级冷启动。
-- 新增 `[startup]` 阶段日志并由 supervisor 安全转录到 journal，分别记录 `voice_ready`、`stt_ready`、`nav_subscriber_ready` 的阶段和累计耗时，以及非敏感的 repo/voice；不记录识别或问题全文。
-- 本轮未改为常驻模型或并行启动。若要显著降低等待，需要单独设计常驻语音进程/模型复用和显存生命周期，并验证退出、重启及故障恢复。
-- 回归测试覆盖默认音色、环境变量覆盖和跨音色缓存隔离；本机全量为 `34 passed, 3 skipped`，NX Python 3.8 候选副本为 `37 passed`。
+- 现改为两层生命周期：`voice-tour-guide.service` 常驻 Python 进程并监听回环地址 `127.0.0.1:8766`；“重启导览服务”负责冷启动和全部预热，“启动/关闭导览”只通过 `/start`、`/stop` 控制任务，复用模型、STT 和导航订阅。
+- 服务预热会生成整条当前路线的 Kokoro WAV 缓存；每次任务启动仍重新读取路线和问答上下文。修改路线、模型、音色或语音配置后应重启导览服务，保证任务启动前缓存完备。
+- 任务取消覆盖导航等待、台词播放和 `post_wait_seconds`；不可打断的问答回复策略保持不变，回复完成后才处理停止。旧实现也无法撤回已提交给导航节点的目标，本轮未扩大该能力。
+- 新增 `[startup] guide_cache_ready`、`[control] tour_starting/tour_stopping` 和任务状态日志；只记录阶段、耗时、段数和状态，不记录识别全文、问题全文、密钥或音频数据。
+- Python 3.8 候选副本全量模拟测试为 `61 passed`，覆盖常驻控制接口、配置重载、路线预缓存、取消路径、重复启动抑制，以及原有并发打断回归；未启动真实导览或发送机器人动作。
 
 ## 已验证事实
 
@@ -109,7 +111,7 @@ docker run --rm unitree_slam_example_new:humble check
 - `docker run --rm unitree_slam_example_new:humble check` 成功；六个节点 ELF 的 `ldd` 无缺失依赖，RUNPATH 指向镜像内 SDK 和自定义 Action。
 - 无宿主 SDK 上下文仍可使用既有镜像编译 `custom_action_ws` 和六个节点。
 - Compose、Shell 语法、Python compileall 和 systemd unit 静态检查通过。
-- NX 自动化测试：`PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -q tests` 为 `23 passed`。
+- 提交前最终 NX 主工作区测试结果应以本轮 Git 与同步步骤记录为准；候选副本当前为 `61 passed`。
 - Humble 临时订阅者已收到 HTTP 桥发布的 `/go_goal_pose`；临时 `/current_pose` 已到达桥和控制台，验证跨容器 ROS 数据链但未驱动机器人。
 - `goGoalNavigation eth0` 曾只完成 ROS/Unitree 初始化并保持 8 秒，未发送目标或启动重定位；真实运动链尚未验证。
 - 项目已从 NX `/home/unitree/gt` 原地迁移到 `/home/unitree/RobotABrainOnline`，旧路径已移除。
@@ -123,7 +125,7 @@ docker run --rm unitree_slam_example_new:humble check
 
 ## 剩余阻塞与下一步
 
-1. 在不启动机器人运动节点的前提下，验证无线麦克风采音、STT、Kokoro 和 REDMI 外放链路。
-2. 只有在现场安全确认并获得用户明确授权后，才能依次验证导航、重定位、手臂 Action 和完整导览。
-3. 若需从 NX 访问 GitHub、镜像仓库或 Hugging Face，配置经本机 1082 的受控代理转发。
+1. 用 root 权限安装更新后的 `voice-tour-guide.service` 和控制台 sudoers、校验并 `daemon-reload`；当前仓库同步不会自动修改 `/etc`。
+2. 在不启动机器人运动节点的前提下，验证常驻预热、无线麦克风采音、STT、Kokoro 和 REDMI 外放链路。
+3. 只有在现场安全确认并获得用户明确授权后，才能验证任务启动时延、停止行为、导航、手臂 Action 和完整导览。
 4. 不得在日志中记录 API Key、密码、完整识别文本或大体积 DDS 原始数据。

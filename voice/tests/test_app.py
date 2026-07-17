@@ -22,12 +22,14 @@ class FakeManager:
         return {"ok": True, "state": "active", "message": "手臂控制启动命令已提交"}
 
     def start_tour(self):
+        return {"ok": True, "state": "starting", "message": "导览任务已立即启动"}
+
+    def restart_tour_service(self):
         self.states["tour"] = "active"
-        return {"ok": True, "state": "active", "message": "导览启动命令已提交"}
+        return {"ok": True, "state": "active", "message": "导览服务正在预热"}
 
     def stop_tour(self):
-        self.states["tour"] = "inactive"
-        return {"ok": True, "state": "inactive", "message": "导览已关闭，导航和手臂保持运行"}
+        return {"ok": True, "state": "stopping", "message": "导览任务停止请求已提交，预热服务保持运行"}
 
 
 class FakeTracker:
@@ -53,8 +55,10 @@ def test_page_structure_and_apis(config_and_store):
         assert html.count('class="btn arm-start"') == 1
         assert html.count('class="btn tour-start"') == 1
         assert html.count('class="btn tour-stop"') == 1
+        assert html.count('class="btn tour-restart"') == 1
         assert ">重启导航</button>" in html
         assert ">重启手臂控制</button>" in html
+        assert ">重启导览服务</button>" in html
         assert "服务状态管理" not in html
         assert "开发人员选项" not in html
         assert "任务控制" in html and "点位台词" in html
@@ -67,9 +71,10 @@ def test_page_structure_and_apis(config_and_store):
         assert status["external_processes"] == {"navigation": False, "arm": False, "tour": False}
         assert client.post("/api/navigation/start").status_code == 200
         assert client.post("/api/arm/start").status_code == 200
+        assert client.post("/api/tour/restart-service").status_code == 200
         assert client.post("/api/tour/start").status_code == 200
         stopped = client.post("/api/tour/stop").json()
-        assert "导航和手臂保持运行" in stopped["message"]
+        assert "预热服务保持运行" in stopped["message"]
         assert manager.states["navigation"] == "active"
         assert manager.states["arm"] == "active"
 

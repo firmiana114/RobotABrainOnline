@@ -8,6 +8,8 @@ import signal
 import subprocess
 import time
 from typing import Callable
+import urllib.error
+import urllib.request
 
 from .config import ConsoleConfig
 
@@ -181,7 +183,7 @@ class SystemdManager:
             logger.info("外部进程满足导览前置条件：label=%s service=%s", label, service)
         return external
 
-    def start_tour(self) -> dict:
+    def _missing_tour_prerequisites(self) -> list[str]:
         missing = []
         if not self._tour_prerequisite_ready(
             self.config.navigation_service, "[g]oGoalNavigation66", "导航"
@@ -191,17 +193,61 @@ class SystemdManager:
             self.config.arm_service, "[g]1ArmOfficialActionServer", "手臂控制"
         ):
             missing.append("手臂控制")
+        return missing
+
+    def _tour_control_request(self, path: str) -> dict:
+        request = urllib.request.Request(
+            f"{self.config.tour_control_url.rstrip('/')}{path}",
+            data=b"{}",
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=3.0) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            try:
+                payload = json.loads(exc.read().decode("utf-8"))
+                message = str(payload.get("message") or "导览控制请求失败")
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+                message = "导览控制请求失败"
+            logger.warning("导览控制拒绝请求：path=%s status=%s", path, exc.code)
+            raise CommandError(message, exc.code) from exc
+        except (OSError, urllib.error.URLError, json.JSONDecodeError) as exc:
+            logger.error("导览控制接口不可用：path=%s error_type=%s", path, type(exc).__name__)
+            raise CommandError("导览服务尚未预热完成，请先重启导览服务并等待就绪", 503) from exc
+        if not isinstance(payload, dict):
+            raise CommandError("导览控制接口返回格式错误", 500)
+        logger.info("导览控制请求完成：path=%s state=%s", path, payload.get("state"))
+        return payload
+
+    def restart_tour_service(self) -> dict:
+        missing = self._missing_tour_prerequisites()
         if missing:
             raise CommandError(f"请先启动：{'、'.join(missing)}", 409)
-        return self._start(self.config.tour_service, "[n]av_route_then_speak.py", "导览")
+        result = self._restart(
+            self.config.tour_service,
+            "[v]oice_console.supervisor",
+            "导览服务",
+        )
+        result["message"] = "导览服务已重启，正在完成模型和语音预热"
+        return result
+
+    def start_tour(self) -> dict:
+        missing = self._missing_tour_prerequisites()
+        if missing:
+            raise CommandError(f"请先启动：{'、'.join(missing)}", 409)
+        if self.state(self.config.tour_service) != "active":
+            raise CommandError("请先点击“重启导览服务”并等待预热完成", 409)
+        return self._tour_control_request("/start")
 
     def stop_tour(self) -> dict:
         current = self.state(self.config.tour_service)
-        if current == "inactive":
-            return {"ok": True, "state": "inactive", "message": "导览已经关闭"}
-        self._privileged_systemctl("stop", self.config.tour_service)
-        new_state = self.state(self.config.tour_service)
-        return {"ok": True, "state": new_state, "message": "导览已关闭，导航和手臂保持运行"}
+        if current != "active":
+            return {"ok": True, "state": current, "message": "导览任务已经关闭"}
+        result = self._tour_control_request("/stop")
+        result["message"] = "导览任务停止请求已提交，预热服务保持运行"
+        return result
 
     def all_states(self) -> dict[str, str]:
         return {
@@ -215,14 +261,14 @@ class SystemdManager:
         return {
             "navigation": states["navigation"] == "inactive" and self._external_process_exists("[g]oGoalNavigation66"),
             "arm": states["arm"] == "inactive" and self._external_process_exists("[g]1ArmOfficialActionServer"),
-            "tour": states["tour"] == "inactive" and self._external_process_exists("[n]av_route_then_speak.py"),
+            "tour": states["tour"] == "inactive" and self._external_process_exists("[v]oice_console.supervisor"),
         }
 
 
 def read_tour_status(path: Path, tour_state: str) -> dict:
     default = {
-        "active": tour_state in {"active", "activating"},
-        "status": "running" if tour_state in {"active", "activating"} else "idle",
+        "active": False,
+        "status": "preparing" if tour_state in {"active", "activating"} else "service_stopped",
         "current_site": None,
         "next_site": None,
         "current_index": 0,
@@ -237,11 +283,12 @@ def read_tour_status(path: Path, tour_state: str) -> dict:
     if not isinstance(raw, dict):
         return default
     default.update({key: raw.get(key, value) for key, value in default.items()})
-    default["active"] = tour_state in {"active", "activating"}
+    default["active"] = default.get("status") in {"starting", "running", "stopping"}
     if tour_state == "failed":
         default["status"] = "failed"
         default["speech_state"] = "导览异常"
-    elif tour_state == "inactive" and default.get("status") == "running":
-        default["status"] = "idle"
+    elif tour_state == "inactive":
+        default["active"] = False
+        default["status"] = "service_stopped"
         default["speech_state"] = "未在监听"
     return default

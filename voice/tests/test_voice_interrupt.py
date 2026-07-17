@@ -199,6 +199,29 @@ def test_missing_question_times_out_then_replays_current_segment():
     assert len(app.play_calls) == 2
 
 
+def test_task_stop_during_playback_does_not_collect_question_or_replay():
+    coordinator = RouteInterruptCoordinator(boundary_grace=0)
+    cancel_event = threading.Event()
+    answers = []
+
+    def stop_task():
+        coordinator.claim_interrupt()
+        cancel_event.set()
+        return True
+
+    app = FakeApp([stop_task])
+    run_segment(
+        app,
+        coordinator,
+        answers.append,
+        cancelled=cancel_event.is_set,
+    )
+
+    assert answers == []
+    assert len(app.play_calls) == 1
+    assert app.modes[-1] == "idle"
+
+
 class FailedProcess:
     def poll(self):
         return 2
@@ -410,6 +433,126 @@ def test_route_stt_partial_wake_and_final_share_interrupt_session(monkeypatch):
 
     assert app.stop_requests == 2
     assert coordinator.collect_interrupt_question(1, 0, 0) == "请介绍这里"
+
+
+def test_route_stt_ignores_wake_word_while_preheated_but_not_running(monkeypatch):
+    navigation = pytest.importorskip("nav_route_then_speak")
+
+    class StandbyApp:
+        route_task_active = False
+        stop_requests = 0
+
+        @staticmethod
+        def get_mode():
+            return "idle", "", -1
+
+        def request_stop_guide(self):
+            self.stop_requests += 1
+
+    class Result:
+        @staticmethod
+        def get_sentence():
+            return {"text": "小智，请介绍这里", "is_end": True}
+
+    app = StandbyApp()
+    navigation.RouteSTTCallback(app).on_event(Result())
+
+    assert app.stop_requests == 0
+
+
+def test_preheated_route_reloads_configuration_when_task_starts(monkeypatch, tmp_path):
+    navigation = pytest.importorskip("nav_route_then_speak")
+    route_file = tmp_path / "route.json"
+    route_file.write_text(
+        '[{"name":"opening","skip_navigation":true,'
+        '"segments":[{"text":"欢迎参观。"}]}]',
+        encoding="utf-8",
+    )
+    args = SimpleNamespace(
+        route_file=str(route_file),
+        action_alias="",
+        qa_context_file="",
+        qa_context_max_chars=100,
+        publisher_wait=1,
+        goal_timeout=1,
+        qa_context_text="",
+    )
+    app = SimpleNamespace(args=SimpleNamespace(qa_context_text=""))
+    cancel_event = threading.Event()
+    spoken = []
+
+    class Node:
+        @staticmethod
+        def wait_for_nav_subscriber(_timeout, cancel_event=None):
+            return not cancel_event.is_set()
+
+    monkeypatch.setattr(
+        navigation,
+        "speak_segment",
+        lambda _app, _node, segment, index, stt_enabled, aliases, cancel_event=None: spoken.append(
+            (segment["text"], index, stt_enabled, aliases, cancel_event.is_set())
+        ),
+    )
+
+    navigation.execute_route_once(args, app, Node(), True, cancel_event)
+
+    assert spoken == [("欢迎参观。", 0, True, navigation.parse_action_aliases(""), False)]
+
+
+def test_preheated_route_stop_prevents_next_point(monkeypatch, tmp_path):
+    navigation = pytest.importorskip("nav_route_then_speak")
+    route_file = tmp_path / "route.json"
+    route_file.write_text(
+        '[{"name":"opening","skip_navigation":true,"segments":[]}]',
+        encoding="utf-8",
+    )
+    args = SimpleNamespace(
+        route_file=str(route_file),
+        action_alias="",
+        qa_context_file="",
+        qa_context_max_chars=100,
+        publisher_wait=1,
+        goal_timeout=1,
+        qa_context_text="",
+    )
+    app = SimpleNamespace(args=SimpleNamespace(qa_context_text=""))
+    cancel_event = threading.Event()
+    cancel_event.set()
+
+    class Node:
+        @staticmethod
+        def wait_for_nav_subscriber(_timeout, cancel_event=None):
+            raise navigation.TourCancelled("cancelled")
+
+    with pytest.raises(navigation.TourCancelled):
+        navigation.execute_route_once(args, app, Node(), True, cancel_event)
+
+
+def test_preheat_generates_all_route_audio_without_playback(monkeypatch, tmp_path):
+    navigation = pytest.importorskip("nav_route_then_speak")
+    route_file = tmp_path / "route.json"
+    route_file.write_text(
+        '[{"name":"opening","skip_navigation":true,'
+        '"segments":[{"text":"第一段。"},{"text":"第二段。"}]}]',
+        encoding="utf-8",
+    )
+    args = SimpleNamespace(route_file=str(route_file))
+    generated = []
+
+    class App:
+        @staticmethod
+        def guide_wav_path(index, _text):
+            return tmp_path / f"guide_{index}.wav"
+
+        @staticmethod
+        def ensure_guide_wav(index, text):
+            generated.append((index, text))
+
+    total, generated_count = navigation.precache_route_audio(args, App())
+
+    assert total == 2
+    assert generated_count == 2
+    assert generated == [(0, "第一段。"), (1, "第二段。")]
 
 
 def test_guide_cache_key_changes_with_kokoro_voice(tmp_path: Path):
