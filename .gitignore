@@ -15,6 +15,7 @@ voice/.venv/
 voice/hf_cache/
 voice/runtime/
 voice/*.whl
+voice/guide_cache/*.wav
 
 # ROS and application logs
 *.log

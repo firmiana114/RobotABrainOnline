@@ -421,7 +421,7 @@ def test_guide_cache_key_changes_with_kokoro_voice(tmp_path: Path):
 
     assistant.kokoro_voice = "zf_001"
     female_path = assistant.guide_wav_path(1, "欢迎参观。")
-    assistant.kokoro_voice = "zm_029"
+    assistant.kokoro_voice = "zm_009"
     male_path = assistant.guide_wav_path(1, "欢迎参观。")
 
     assert female_path != male_path

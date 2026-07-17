@@ -11,7 +11,7 @@ RobotABrainOnline 是 Unitree G1 的在线导览项目，整合 ROS 2 Humble 导
 - 机器人通信网卡：默认 `eth0`
 - 正式路线配置：`voice/conf/dialogue_0.json`
 - 运行时私密配置：`voice/runtime/voice.env`
-- 默认 Kokoro 音色：`zm_029`（成熟男性音色）
+- 默认 Kokoro 音色：`zm_009`（官方中文男性音色文件排序中的第一个）
 
 正式导览由以下五个 systemd 服务组成：
 
