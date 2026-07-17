@@ -96,6 +96,7 @@ docker run --rm unitree_slam_example_new:humble check
 
 ## 已验证事实
 
+- 控制台启动失败根因是迁移后的 `.venv/bin/activate` 仍硬编码旧目录 `/home/unitree/gt/voice/.venv`，使 systemd 最终调用缺少 `uvicorn` 的 `/usr/bin/python3`；控制台、导航和导览脚本已改为直接调用可迁移的 `${VENV_ROOT}/bin/python`，并记录实际解释器路径。
 - 根目录新增 `README.md`，集中说明 NX 正式导览的启动前安全检查、网页/命令行启动顺序、状态与日志查看、停止顺序和常见失败；不包含纯语音试听流程。
 - `docker run --rm unitree_slam_example_new:humble check` 成功；六个节点 ELF 的 `ldd` 无缺失依赖，RUNPATH 指向镜像内 SDK 和自定义 Action。
 - 无宿主 SDK 上下文仍可使用既有镜像编译 `custom_action_ws` 和六个节点。

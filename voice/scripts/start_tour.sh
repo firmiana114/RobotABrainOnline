@@ -3,12 +3,18 @@ set -Eeo pipefail
 
 PROJECT_ROOT="${VOICE_PROJECT_ROOT:-/home/unitree/RobotABrainOnline/voice}"
 VENV_ROOT="${VOICE_VENV_ROOT:-${PROJECT_ROOT}/.venv}"
+PYTHON_BIN="${VENV_ROOT}/bin/python"
 
 log_info() {
   printf '[%s] [INFO] %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$*"
 }
 
-source "${VENV_ROOT}/bin/activate"
+if [[ ! -x "$PYTHON_BIN" ]]; then
+  printf '[%s] [ERROR] tour Python is unavailable path=%s\n' \
+    "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$PYTHON_BIN" >&2
+  exit 1
+fi
+
 set +u
 if [[ -f "${PROJECT_ROOT}/runtime/voice.env" ]]; then
   set -a
@@ -34,5 +40,5 @@ if [[ -z "${DASHSCOPE_API_KEY:-${OPENAI_API_KEY:-}}" ]]; then
   exit 1
 fi
 
-log_info "starting venv tour root=${PROJECT_ROOT} nav_bridge=${NAV_BRIDGE_URL} arm_bridge=${ARM_BRIDGE_URL}"
-exec python3 -m voice_console.supervisor
+log_info "starting venv tour root=${PROJECT_ROOT} python=${PYTHON_BIN} nav_bridge=${NAV_BRIDGE_URL} arm_bridge=${ARM_BRIDGE_URL}"
+exec "$PYTHON_BIN" -m voice_console.supervisor

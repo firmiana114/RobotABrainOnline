@@ -160,5 +160,6 @@ sudo systemctl stop voice-control-console.service
 - 麦克风启动失败：检查 `arecord -l` 中是否存在 `Rx`，以及 `ALSA_INPUT_DEVICE`、通道数和采样率配置。
 - 扬声器播放失败：检查 `aplay -l` 中的 REDMI 设备，并查看导览日志里的设备名和 `aplay` 返回码。
 - 服务进入 `failed`：先通过 `journalctl -b -u <服务名>` 查明原因；修复后执行 `sudo systemctl reset-failed <服务名>` 再重新启动。
+- 日志显示从旧目录或系统 Python 启动：当前脚本应直接使用 `voice/.venv/bin/python`；确认 NX 已同步到最新提交，避免加载迁移前虚拟环境中的硬编码路径。
 
 更完整的架构、验证记录和现场未验证事项见 [HANDOFF_REPORT.md](HANDOFF_REPORT.md)。
