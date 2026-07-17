@@ -2,7 +2,7 @@
 
 ## 项目整体描述
 
-- 统一仓库路径：本机 `work/RobotABrainOnline`，Orin NX `/home/unitree/RobotABrainOnline`；`voice/` 是同一仓库的宿主导览子项目。AGX `/mnt/ssd/navgation/projects/temp/unitree_slam_example_new` 仅为历史部署副本。
+- 统一仓库路径：本机 `/Users/firmiana/Desktop/RobotABrainOnline`，Orin NX `/home/unitree/RobotABrainOnline`；`voice/` 是同一仓库的宿主导览子项目。AGX `/mnt/ssd/navgation/projects/temp/unitree_slam_example_new` 仅为历史部署副本。
 - 用途：为 Unitree G1 提供 ROS 2 Humble 下的 SLAM、导航、手臂动作和手势 DDS 桥接示例，以及宿主 venv 中的语音导览和前端控制台。
 - 核心功能：`keyDemo` 负责建图/重定位交互；`goGoalNavigation` 与 `goGoalNavigation66` 提供导航 topic/action；`g1Arm7DIYActionExample` 与 `g1ArmOfficialActionServer` 提供手臂动作；`gestureTopicBridge` 提供手势话题桥接。
 - 主要技术栈：Ubuntu 22.04、ROS 2 Humble、C++17、CMake、colcon/ament、Unitree SDK2、Cyclone DDS、Docker Compose、ARM64。
