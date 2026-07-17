@@ -27,6 +27,7 @@ from kokoro import KModel, KPipeline
 from dashscope.audio.asr import Recognition, RecognitionCallback, RecognitionResult
 
 from voice_console.interrupt import play_audio_file
+from voice_console.config import DEFAULT_KOKORO_VOICE
 
 
 TOUR_SENTENCES = [
@@ -535,7 +536,15 @@ class TourGuideAssistant:
         sf.write(str(wav_path), audio, self.kokoro_sample_rate)
 
     def guide_wav_path(self, index: int, text: str) -> Path:
-        h = hashlib.sha1(text.encode("utf-8")).hexdigest()[:16]
+        cache_identity = "|".join(
+            (
+                self.kokoro_repo_id,
+                self.kokoro_voice,
+                str(self.args.kokoro_speed),
+                text,
+            )
+        )
+        h = hashlib.sha1(cache_identity.encode("utf-8")).hexdigest()[:16]
         return self.guide_cache_dir / f"guide_{index:02d}_{h}.wav"
 
     def ensure_guide_wav(self, index: int, text: str) -> Path:
@@ -1251,7 +1260,7 @@ def parse_args():
     parser.add_argument("--enable-search", action="store_true")
 
     parser.add_argument("--kokoro-repo-id", default="hexgrad/Kokoro-82M-v1.1-zh")
-    parser.add_argument("--kokoro-voice", default="zf_001")
+    parser.add_argument("--kokoro-voice", default=DEFAULT_KOKORO_VOICE)
     parser.add_argument("--kokoro-speed", type=float, default=1.0)
 
     parser.add_argument("--max-sentence-silence", type=int, default=700)

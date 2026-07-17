@@ -85,6 +85,15 @@ docker run --rm unitree_slam_example_new:humble check
 - 本机全量测试为 `32 passed, 2 skipped`，跳过项依赖本机未安装的 DashScope/完整语音栈；新增纯并发测试连续运行 10 轮均通过。NX Python 3.8 环境候选副本全量测试为 `34 passed`。
 - 未启动导航、手臂或完整导览，未发送机器人动作。真实麦克风、扬声器、慢 Qwen 网络和 WAV 自然结束边界仍需现场安全条件下验证。
 
+## Kokoro 成熟男性音色
+
+- Kokoro v1.1-zh 官方仓库包含 55 个 `zf_*` 中文女声和 45 个 `zm_*` 中文男声，但没有年龄或风格标签。
+- 使用同一句中文导览词在 NX CUDA 上抽样比较 12 个男声；`zm_029` 的基频中位数约 104 Hz、波动约 16.5 Hz，是样本中最低且最稳定的候选，因此作为成熟男性默认音色。
+- `voice_console.config.DEFAULT_KOKORO_VOICE` 统一设为 `zm_029`；导览 supervisor 显式传入 `--kokoro-voice`，并允许通过 `KOKORO_VOICE` 环境变量覆盖。
+- 导览 WAV 缓存键现在包含模型、voice、语速和文本。旧 `zf_001` 缓存仍可保留但不会被新音色误用，首次正式播报会生成新的 `zm_029` 缓存。
+- NX 离线模型缓存已补齐 `zm_029.pt`；`HF_HUB_OFFLINE=1` 下完成 CUDA 合成，3.1 秒验证音频生成成功，未播放音频、未启动导览或机器人节点。
+- 回归测试覆盖默认音色、环境变量覆盖和跨音色缓存隔离；本机全量为 `34 passed, 3 skipped`，NX Python 3.8 候选副本为 `37 passed`。
+
 ## 已验证事实
 
 - `docker run --rm unitree_slam_example_new:humble check` 成功；六个节点 ELF 的 `ldd` 无缺失依赖，RUNPATH 指向镜像内 SDK 和自定义 Action。

@@ -304,3 +304,18 @@ def test_route_stt_partial_wake_and_final_share_interrupt_session(monkeypatch):
 
     assert app.stop_requests == 2
     assert coordinator.collect_interrupt_question(1, 0, 0) == "请介绍这里"
+
+
+def test_guide_cache_key_changes_with_kokoro_voice(tmp_path: Path):
+    guide = pytest.importorskip("tour_guide_xiaozhi_interrupt_resume")
+    assistant = object.__new__(guide.TourGuideAssistant)
+    assistant.guide_cache_dir = tmp_path
+    assistant.kokoro_repo_id = "hexgrad/Kokoro-82M-v1.1-zh"
+    assistant.args = SimpleNamespace(kokoro_speed=1.0)
+
+    assistant.kokoro_voice = "zf_001"
+    female_path = assistant.guide_wav_path(1, "欢迎参观。")
+    assistant.kokoro_voice = "zm_029"
+    male_path = assistant.guide_wav_path(1, "欢迎参观。")
+
+    assert female_path != male_path

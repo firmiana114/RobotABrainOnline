@@ -7,9 +7,11 @@ import soundfile as sf
 import torch
 from kokoro import KModel, KPipeline
 
+from voice_console.config import DEFAULT_KOKORO_VOICE
+
 REPO_ID = "hexgrad/Kokoro-82M-v1.1-zh"
 SAMPLE_RATE = 24000
-VOICE = "zf_001"
+VOICE = DEFAULT_KOKORO_VOICE
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 print("使用设备:", device)

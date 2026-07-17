@@ -23,6 +23,8 @@ from openai import OpenAI
 from kokoro import KModel, KPipeline
 from dashscope.audio.asr import Recognition, RecognitionCallback, RecognitionResult
 
+from voice_console.config import DEFAULT_KOKORO_VOICE
+
 
 def clean_api_key(key):
     if not key:
@@ -545,7 +547,7 @@ def parse_args():
     parser.add_argument("--enable-search", action="store_true")
 
     parser.add_argument("--kokoro-repo-id", default="hexgrad/Kokoro-82M-v1.1-zh")
-    parser.add_argument("--kokoro-voice", default="zf_001")
+    parser.add_argument("--kokoro-voice", default=DEFAULT_KOKORO_VOICE)
     parser.add_argument("--kokoro-speed", type=float, default=1.0)
 
     parser.add_argument("--max-sentence-silence", type=int, default=900)

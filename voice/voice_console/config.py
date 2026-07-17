@@ -6,6 +6,7 @@ from pathlib import Path
 
 
 DEFAULT_PROJECT_ROOT = Path("/home/unitree/RobotABrainOnline/voice")
+DEFAULT_KOKORO_VOICE = "zm_029"
 
 
 @dataclass(frozen=True)

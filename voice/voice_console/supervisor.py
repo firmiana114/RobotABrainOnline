@@ -13,7 +13,7 @@ import tempfile
 import threading
 import time
 
-from .config import ConsoleConfig
+from .config import ConsoleConfig, DEFAULT_KOKORO_VOICE
 from .dialogue import DialogueStore
 
 
@@ -90,6 +90,8 @@ class TourSupervisor:
             os.environ.get("STT_SAMPLE_RATE", "16000"),
             "--qwen-model",
             os.environ.get("QWEN_MODEL", "qwen-plus"),
+            "--kokoro-voice",
+            os.environ.get("KOKORO_VOICE", DEFAULT_KOKORO_VOICE),
             "--speaker-name",
             os.environ.get("SPEAKER_NAME", "REDMI Speaker 2-6002"),
             "--qa-context-file",

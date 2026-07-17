@@ -28,6 +28,7 @@ from voice_console.interrupt import (
     answer_with_fallback,
     run_interruptible_segment,
 )
+from voice_console.config import DEFAULT_KOKORO_VOICE
 
 
 ARRIVED = {"arrived", "mid_arrived"}
@@ -869,7 +870,7 @@ def build_parser():
     parser.add_argument("--max-speak-chars", type=int, default=130)
     parser.add_argument("--max-answer-sentences", type=int, default=3)
     parser.add_argument("--kokoro-repo-id", default="hexgrad/Kokoro-82M-v1.1-zh")
-    parser.add_argument("--kokoro-voice", default="zf_001")
+    parser.add_argument("--kokoro-voice", default=DEFAULT_KOKORO_VOICE)
     parser.add_argument("--kokoro-speed", type=float, default=1.0)
     parser.add_argument("--kokoro-device", default="cuda")
     parser.add_argument("--resume-delay", type=float, default=0.5)
