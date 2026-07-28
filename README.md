@@ -181,4 +181,6 @@ sudo systemctl stop voice-control-console.service
 - 导览服务为 `active` 但“启动导览”不可用：预热可能尚未完成；查看控制台任务状态或 `curl -s http://127.0.0.1:8766/status`，并检查 `[startup]` 日志。
 - 日志显示从旧目录或系统 Python 启动：当前脚本应直接使用 `voice/.venv/bin/python`；确认 NX 已同步到最新提交，避免加载迁移前虚拟环境中的硬编码路径。
 
-更完整的架构、验证记录和现场未验证事项见 [HANDOFF_REPORT.md](HANDOFF_REPORT.md)。
+首次接触项目时，请先阅读 [PROJECT_GUIDE.md](PROJECT_GUIDE.md)，其中详细说明系统边界、模块职责、核心数据流、配置生成、导览状态机、接口和开发验证方法。
+
+近期部署状态、验证记录和现场未验证事项见 [HANDOFF_REPORT.md](HANDOFF_REPORT.md)。

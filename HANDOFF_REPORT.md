@@ -2,7 +2,7 @@
 
 ## 项目整体描述
 
-- 统一仓库路径：本机 `/Users/firmiana/Desktop/RobotABrainOnline`，Orin NX `/home/unitree/RobotABrainOnline`；AGX `/mnt/ssd/navgation/projects/temp/unitree_slam_example_new` 仅为历史部署副本。
+- 统一仓库路径：本机 `projects/RobotABrainOnline`，Orin NX `/home/unitree/RobotABrainOnline`；AGX `/mnt/ssd/navgation/projects/temp/unitree_slam_example_new` 仅为历史部署副本。
 - 用途：为 Unitree G1 提供 SLAM、导航、手臂动作、手势桥、语音导览、Qwen 问答、Kokoro 中文 TTS 和 8081 前端控制台。
 - 技术栈：Ubuntu 22.04/aarch64、ROS 2 Humble、C++17、CMake/colcon、Unitree SDK2、Fast DDS、Docker Compose；NX 宿主使用 Python 3.8 venv、FastAPI、DashScope、Kokoro/PyTorch CUDA 和 ALSA。
 - 架构硬约束：宿主 venv 不 source Foxy、不 import `rclpy`、不安装 `custom_action_interfaces`；所有 ROS 2、自定义 Action、导航和手臂节点均在 Humble 容器中运行。
@@ -18,6 +18,7 @@
 - `voice/docker-compose.bridge.yml`：Humble HTTP 桥，使用 host network/IPC，仅监听 `127.0.0.1:8765`。
 - `voice/conf/dialogue_0.json`：标准导览配置；`dialogue_0_route.json` 和 `guide_qa_context.txt` 是派生内容。
 - `voice/guide_cache/`：预生成播报；`voice/hf_cache/`：Kokoro 离线模型缓存，不纳入 Git。
+- `PROJECT_GUIDE.md`：面向初次接手者的详细架构、模块逻辑、接口、配置、状态机、诊断和开发验证指南。
 
 ## 核心数据流
 
@@ -114,6 +115,7 @@ docker run --rm unitree_slam_example_new:humble check
 
 ## 已验证事实
 
+- 2026-07-28 新增 `PROJECT_GUIDE.md`，并从根目录 `README.md` 提供入口；文档依据当前 Python、C++、Docker、systemd、配置和测试实现整理。
 - 控制台启动失败根因是迁移后的 `.venv/bin/activate` 仍硬编码旧目录 `/home/unitree/gt/voice/.venv`，使 systemd 最终调用缺少 `uvicorn` 的 `/usr/bin/python3`；控制台、导航和导览脚本已改为直接调用可迁移的 `${VENV_ROOT}/bin/python`，并记录实际解释器路径。
 - 根目录新增 `README.md`，集中说明 NX 正式导览的启动前安全检查、网页/命令行启动顺序、状态与日志查看、停止顺序和常见失败；不包含纯语音试听流程。
 - `docker run --rm unitree_slam_example_new:humble check` 成功；六个节点 ELF 的 `ldd` 无缺失依赖，RUNPATH 指向镜像内 SDK 和自定义 Action。
@@ -127,6 +129,7 @@ docker run --rm unitree_slam_example_new:humble check
 ## Git 与同步状态
 
 - 根目录是 `main` 分支 Git 仓库，`voice/` 由根仓库统一管理，不要在子目录再次执行 `git init`。
+- 2026-07-28 编写项目指南时，本机连接 NX `172.16.2.156:22` 超时，无法核对或同步 NX；服务器当前 HEAD 和工作区状态未确认。
 - 2026-07-17 合并交接报告前，本机与 NX 已验证处于相同基线提交 `9eb2a5a342545e3de3d7b83cb4b3659f7977f491`，两端工作区均干净。
 - 本报告本身会产生后续提交，因此当前部署提交应以两端 `git rev-parse HEAD` 的实际结果为准；每次修改后必须再次确认本机与 NX HEAD 相同且工作区干净。
 - 修改代码或文档后必须更新本报告、创建中文 Git 提交，并把 NX 同步到同一提交。
