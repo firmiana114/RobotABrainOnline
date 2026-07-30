@@ -19,9 +19,16 @@ def test_route_generation_and_context(config_and_store):
     data["opening"]["handshake_greeting"] = "{leader_calling}您好。"
     route = build_route(data)
     assert route[0]["skip_navigation"] is True
-    assert len(route[0]["segments"]) == 4
-    assert route[0]["segments"][0]["text"] == "测试嘉宾您好。"
+    assert len(route[0]["segments"]) == 3
+    assert route[0]["segments"][0]["text"] == (
+        "测试嘉宾您好。" + data["opening"]["handshake_welcome"]
+    )
     assert route[0]["segments"][0]["action"] == "shake_hand"
+    assert [
+        segment.get("action")
+        for segment in route[0]["segments"]
+        if segment.get("action") == "shake_hand"
+    ] == ["shake_hand"]
     assert all(item["name"] != "point_1" for item in route)
     context = build_qa_context(data)
     assert "测试嘉宾您好" in context

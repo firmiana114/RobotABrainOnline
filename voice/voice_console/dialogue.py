@@ -16,10 +16,9 @@ logger = logging.getLogger(__name__)
 
 COORDINATE_FIELDS = ("x", "y", "z", "ox", "oy", "oz", "ow")
 OPENING_SEQUENCE = (
-    ("handshake_greeting", "shake_hand"),
-    ("handshake_welcome", "shake_hand"),
-    ("group_welcome", "face_wave"),
-    ("follow_intro", ""),
+    (("handshake_greeting", "handshake_welcome"), "shake_hand"),
+    (("group_welcome",), "face_wave"),
+    (("follow_intro",), ""),
 )
 BACKUP_LIMIT = 20
 MAX_POST_WAIT_SECONDS = 3600
@@ -309,8 +308,12 @@ def build_route(data: dict) -> list[dict]:
     points = data.get("points", {})
     route: list[dict] = []
     opening_segments = []
-    for key, action in OPENING_SEQUENCE:
-        text = _substitute(opening.get(key, ""), variables).strip()
+    for keys, action in OPENING_SEQUENCE:
+        texts = [
+            _substitute(opening.get(key, ""), variables).strip()
+            for key in keys
+        ]
+        text = "".join(item for item in texts if item)
         if not text:
             continue
         segment = {"text": text}
@@ -318,6 +321,15 @@ def build_route(data: dict) -> list[dict]:
             segment.update({"action": action, "speak_with_action": True})
         opening_segments.append(segment)
     if opening_segments:
+        logger.info(
+            "开场路线已生成：segment_count=%s actions=%s",
+            len(opening_segments),
+            ",".join(
+                str(segment["action"])
+                for segment in opening_segments
+                if segment.get("action")
+            ),
+        )
         route.append({"name": "opening", "scene": "开场", "skip_navigation": True, "segments": opening_segments})
 
     for step in data.get("steps", []):

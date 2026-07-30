@@ -21,7 +21,7 @@ def test_supervisor_reactivates_saved_dialogue_selection(config_and_store):
     assert activation["dialogue_file"] == "dialogue_1.json"
     route = json.loads(config.route_file.read_text(encoding="utf-8"))
     assert any(
-        segment.get("text") == "监督进程备用台词。"
+        "监督进程备用台词。" in str(segment.get("text") or "")
         for node in route
         for segment in node.get("segments", [])
     )

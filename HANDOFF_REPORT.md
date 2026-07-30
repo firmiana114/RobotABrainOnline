@@ -120,7 +120,7 @@ docker run --rm unitree_slam_example_new:humble check
 
 ## dialogue_1 扩展功能段
 
-- 台词段支持 `{"speak_during_navigation":true}`（边走边说，`false` 或省略为到达后播报）和 `{"background_command":"coffee_delivery_run"}`（异步调用 `voice/send_delivery_task.py run`）；旧步骤级边走边说字段仍兼容，前端加载后会显示为台词功能段。
+- 台词段支持 `{"speak_during_navigation":true}`（边走边说，`false` 或省略为到达后播报）和 `{"background_command":"coffee_delivery_run"}`（异步调用 `voice/send_delivery_task.py run`）；旧步骤级边走边说字段仍兼容，前端加载后会显示为台词功能段；opening 的问候与欢迎台词合并为一次握手下的连续播报，两句结束后才自动释放手臂。
 - 后台命令严格使用白名单且单次导览按 once key 去重；所有随台词触发的非 `release_arm` 手势会在该段语音播放完成后自动发送 `release_arm`，`release_after_seconds` 表示播完后的额外延迟，播放异常或任务取消也会尝试释放；INFO/WARNING 日志记录动作名、延迟、取消和桥接结果，不记录台词正文，模拟测试未发送真实咖啡车或机械臂任务。
 
 ## 已验证事实
@@ -130,7 +130,7 @@ docker run --rm unitree_slam_example_new:humble check
 - `docker run --rm unitree_slam_example_new:humble check` 成功；六个节点 ELF 的 `ldd` 无缺失依赖，RUNPATH 指向镜像内 SDK 和自定义 Action。
 - 无宿主 SDK 上下文仍可使用既有镜像编译 `custom_action_ws` 和六个节点。
 - Compose、Shell 语法、Python compileall 和 systemd unit 静态检查通过。
-- 本轮手势释放目标测试为 `19 passed`，仅含提交内容的干净快照全套测试为 `82 passed`；NX 现场工作区叠加其他未提交功能后全套测试为 `49 passed, 6 failed, 27 errors`，失败来自既有测试/实现不同步（如 fixture 缺少 `interaction_log_file`、问答回调签名未更新）。
+- opening 合并路线检查确认 `dialogue_0/1` 均只生成一次握手，手势释放目标测试为 `19 passed`，仅含提交内容的干净快照全套测试为 `82 passed`；NX 现场工作区叠加其他未提交功能后仍存在既有测试/实现不同步（如 fixture 缺少 `interaction_log_file`、问答回调签名未更新）。
 - Humble 临时订阅者已收到 HTTP 桥发布的 `/go_goal_pose`；临时 `/current_pose` 已到达桥和控制台，验证跨容器 ROS 数据链但未驱动机器人。
 - `goGoalNavigation eth0` 曾只完成 ROS/Unitree 初始化并保持 8 秒，未发送目标或启动重定位；真实运动链尚未验证。
 - 项目已从 NX `/home/unitree/gt` 原地迁移到 `/home/unitree/RobotABrainOnline`，旧路径已移除。

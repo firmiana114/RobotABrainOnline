@@ -176,7 +176,7 @@ def test_hot_rows_can_switch_and_save_another_dialogue_file(config_and_store):
     assert alternate_file.with_name("dialogue_1_qa_context.txt").is_file()
     active_route = json.loads(config.route_file.read_text(encoding="utf-8"))
     assert any(
-        segment.get("text") == "备用台词已更新。"
+        "备用台词已更新。" in str(segment.get("text") or "")
         for node in active_route
         for segment in node.get("segments", [])
     )
