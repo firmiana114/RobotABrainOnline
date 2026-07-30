@@ -19,6 +19,7 @@ from .config import (
     DEFAULT_KOKORO_VOICE,
 )
 from .dialogue import DialogueStore
+from .dialogue_catalog import DialogueFileCatalog
 
 
 logger = logging.getLogger(__name__)
@@ -35,6 +36,7 @@ class TourSupervisor:
     def __init__(self, config: ConsoleConfig):
         self.config = config
         self.store = DialogueStore(config.dialogue_file, config.route_file, config.qa_context_file, config.map_root)
+        self.catalog = DialogueFileCatalog(self.store)
         self.process: subprocess.Popen | None = None
         self.stop_event = threading.Event()
         self.status = {
@@ -224,11 +226,12 @@ class TourSupervisor:
                 pass
 
     def run(self) -> int:
-        self.store.sync_runtime_files(backup=False)
+        activation = self.catalog.activate()
         self._load_route_names()
         command = self._command()
         logger.info(
-            "准备启动导览：route=%s qa_context=%s navigation_script=%s wait_adapter=%s",
+            "准备启动导览：dialogue=%s route=%s qa_context=%s navigation_script=%s wait_adapter=%s",
+            activation["dialogue_file"],
             self.config.route_file,
             self.config.qa_context_file,
             self.config.navigation_project / "nav_route_then_speak.py",

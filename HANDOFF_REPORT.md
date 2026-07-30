@@ -112,6 +112,12 @@ docker run --rm unitree_slam_example_new:humble check
 - 新增 `[tts] synthesis_ready` INFO 诊断，记录字符数、分块数、最大音素数、停顿总时长和采样数，不记录台词全文。
 - NX 离线 CUDA 验证原异常段变为 4 块、最大 215 音素、37.670 秒和约 4.91 字/秒；全路线 34 段拆为 65 块，最大 216 音素，无块接近硬限制。候选副本全量模拟测试 `66 passed`；验证 WAV 已删除，未播放音频或发送机器人动作。
 
+## 多台词文件热更新
+
+- “点位台词热更新”会枚举 `voice/conf/*.json` 并排除派生的 `*_route.json`，通过下拉框切换要加载、修改和保存的台词文件，不接受手工路径。
+- 后端校验文件名、真实路径和目录边界；非默认文件保存时生成同名 `_route.json` 与 `_qa_context.txt`。点击“启动导览”或“重启导览服务”会把当前选择生成到正式运行路线并原子记录到 `voice/runtime/active_dialogue.json`，监督进程重启后继续使用同一文件。
+- 新增 INFO/WARNING 日志记录文件列表刷新、选择、保存行数和拒绝原因，不记录台词正文；接口回归覆盖文件切换、独立保存、派生文件排除和路径穿越拒绝。
+
 ## 已验证事实
 
 - 控制台启动失败根因是迁移后的 `.venv/bin/activate` 仍硬编码旧目录 `/home/unitree/gt/voice/.venv`，使 systemd 最终调用缺少 `uvicorn` 的 `/usr/bin/python3`；控制台、导航和导览脚本已改为直接调用可迁移的 `${VENV_ROOT}/bin/python`，并记录实际解释器路径。

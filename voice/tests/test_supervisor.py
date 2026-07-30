@@ -1,7 +1,30 @@
+import json
 import logging
 
 from voice_console.config import DEFAULT_KOKORO_REPO_ID, DEFAULT_KOKORO_VOICE
 from voice_console.supervisor import TourSupervisor
+
+
+def test_supervisor_reactivates_saved_dialogue_selection(config_and_store):
+    config, store = config_and_store
+    alternate_file = config.dialogue_file.with_name("dialogue_1.json")
+    alternate_data = store.load()
+    alternate_data["opening"]["handshake_welcome"] = "监督进程备用台词。"
+    alternate_file.write_text(
+        json.dumps(alternate_data, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    TourSupervisor(config).catalog.activate("dialogue_1.json")
+    activation = TourSupervisor(config).catalog.activate()
+
+    assert activation["dialogue_file"] == "dialogue_1.json"
+    route = json.loads(config.route_file.read_text(encoding="utf-8"))
+    assert any(
+        segment.get("text") == "监督进程备用台词。"
+        for node in route
+        for segment in node.get("segments", [])
+    )
 
 
 def test_tour_command_uses_yunxi_voice_by_default(config_and_store, monkeypatch):
