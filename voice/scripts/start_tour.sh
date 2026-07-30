@@ -34,6 +34,16 @@ export HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-1}"
 export TRANSFORMERS_OFFLINE="${TRANSFORMERS_OFFLINE:-1}"
 export HF_DATASETS_OFFLINE="${HF_DATASETS_OFFLINE:-1}"
 export ENABLE_SEARCH="${ENABLE_SEARCH:-1}"
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+export PULSE_SERVER="${PULSE_SERVER:-unix:${XDG_RUNTIME_DIR}/pulse/native}"
+
+if [[ -n "${PULSE_SINK:-}" ]]; then
+  if command -v pactl >/dev/null 2>&1; then
+    pactl set-default-sink "$PULSE_SINK" || true
+  elif command -v pacmd >/dev/null 2>&1; then
+    pacmd set-default-sink "$PULSE_SINK" || true
+  fi
+fi
 
 if [[ -z "${DASHSCOPE_API_KEY:-${OPENAI_API_KEY:-}}" ]]; then
   echo "Missing DASHSCOPE_API_KEY or OPENAI_API_KEY in ${PROJECT_ROOT}/runtime/voice.env" >&2

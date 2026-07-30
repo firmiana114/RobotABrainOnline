@@ -1,0 +1,251 @@
+{
+  "variables": {
+    "leader_calling": "各位领导"
+  },
+  "opening": {
+    "short_mode_leader_calling": "{leader_calling}",
+    "short_mode_intro": "欢迎您来到滨湖复星人形机器人产业园。我叫小智，可以带您参观展区，也可以回答您的问题。",
+    "short_mode_ready": "如果您想开始参观，可以直接告诉我。",
+    "handshake_greeting": "{leader_calling}您好，我叫小智。",
+    "handshake_welcome": "欢迎您来到滨湖复星人形机器人产业园。",
+    "group_welcome": "各位朋友，也欢迎你们！",
+    "follow_intro": "{leader_calling}，各位，请随我来，我简单的介绍一下园区。"
+  },
+  "steps": [
+    {
+      "scene": "过渡1",
+      "entity_key": "console_point_过渡1",
+      "segments": []
+    },
+    {
+      "scene": "点咖啡",
+      "entity_key": "point_2",
+      "skip_navigation_if_current": true,
+      "segments": [
+        {
+          "text": "对了，{leader_calling}、各位，我们给各位准备了咖啡还有其他饮料，我让我的小伙伴给送过来。"
+        },
+        {
+          "action": "right_hand_up",
+          "text": "我来给各位安排。",
+          "speak_with_action": true,
+          "background_command_name": "呼叫AIR咖啡车",
+          "background_command_once_key": "coffee_delivery_run",
+          "background_command": "coffee_delivery_run"
+        }
+      ]
+    },
+    {
+      "scene": "初步介绍",
+      "entity_key": "point_3",
+      "segments": [
+        {
+          "text": "我们产业园2025年12月开园后，我们紧扣人形机器人核心赛道，做了大量工作，除了提升园区的软件和硬件水平外，我们还不断加大产业项目招引，目前，签约共创实验室平台1个，签约机器人产研项目20余个，成果十分显著。",
+          "speak_during_navigation": true
+        }
+      ]
+    },
+    {
+      "scene": "拿取咖啡",
+      "entity_key": "point_3",
+      "skip_navigation_if_current": true,
+      "segments": [
+        {
+          "action": "right_hand_up",
+          "text": "{leader_calling}，咖啡和饮料来了，请您还有各位朋友自取。"
+        }
+      ]
+    },
+    {
+      "scene": "前往3到5过渡点",
+      "entity_key": "point_5",
+      "skip_navigation_if_current": true,
+      "segments": []
+    },
+    {
+      "scene": "告别并指引小巴方向",
+      "entity_key": "console_point_告别并指引小巴方向",
+      "segments": [
+        {
+          "text": "{leader_calling}、各位领导，下面请移步门外，乘坐无人驾驶小巴车深入了解我们园区。"
+        },
+        {
+          "text": "各位再会！"
+        }
+      ]
+    }
+  ],
+  "map_file": "test7.pcd",
+  "points": {
+    "point_1": {
+      "name": "点位1",
+      "summary": "点位1",
+      "description": "DOCX 剧本起始点位。",
+      "location": [
+        {
+          "x": 1.9105,
+          "y": -1.618,
+          "z": 0.0117,
+          "ox": -0.0029,
+          "oy": 0.0265,
+          "oz": -0.2046,
+          "ow": 0.9785,
+          "mode": 1
+        }
+      ]
+    },
+    "point_1_to_2_transition": {
+      "name": "1->2过渡点位",
+      "summary": "1->2过渡点位",
+      "description": "DOCX 剧本点位1前往点位2路径上的过渡点位；该点位只导航，不播报台词。",
+      "location": [
+        {
+          "x": 8.6465,
+          "y": -2.5763,
+          "z": -0.0722,
+          "ox": 0.0547,
+          "oy": 0.0907,
+          "oz": 0.5347,
+          "ow": 0.8384,
+          "mode": 1
+        }
+      ]
+    },
+    "point_2": {
+      "name": "点咖啡",
+      "summary": "点位2",
+      "description": "DOCX 剧本问咖啡点位；点咖啡台词只允许在该最终点位播报。",
+      "location": [
+        {
+          "x": 0.22480784356594086,
+          "y": 14.191620826721191,
+          "z": -0.03690294176340103,
+          "ox": -0.020289920270442963,
+          "oy": -0.021169673651456833,
+          "oz": 0.9070853590965271,
+          "ow": 0.41992413997650146,
+          "mode": 1
+        }
+      ]
+    },
+    "point_3": {
+      "name": "拿取咖啡",
+      "summary": "点位3",
+      "description": "DOCX 剧本拿取咖啡点位。",
+      "location": [
+        {
+          "x": 1.2812,
+          "y": 15.9683,
+          "z": -0.1038,
+          "ox": 0.0028,
+          "oy": -0.0072,
+          "oz": 0.9717,
+          "ow": 0.2359,
+          "mode": 1
+        }
+      ]
+    },
+    "point_4": {
+      "name": "点位4",
+      "summary": "点位4",
+      "description": "DOCX 剧本点位3前往点位5路径上的中转点位。",
+      "location": [
+        {
+          "x": 13.941,
+          "y": -5.1633,
+          "z": 0.035,
+          "ox": 0.014,
+          "oy": 0.0335,
+          "oz": -0.9085,
+          "ow": -0.4163,
+          "mode": 1
+        }
+      ]
+    },
+    "point_3_to_5_transition": {
+      "name": "前往3到5过渡点",
+      "summary": "3->5过渡点位",
+      "description": "DOCX 剧本点位3前往点位5路径上的过渡点位；该点位只导航，不播报台词。",
+      "location": [
+        {
+          "x": -0.5561,
+          "y": 25.6601,
+          "z": -0.1469,
+          "ox": 0.0028,
+          "oy": 0.0059,
+          "oz": -0.8818,
+          "ow": 0.4716,
+          "mode": 1
+        }
+      ]
+    },
+    "point_5": {
+      "name": "前往3到5过渡点",
+      "summary": "点位5",
+      "description": "DOCX 剧本告别并指引小巴方向点位；告别台词只允许在该最终点位播报。",
+      "location": [
+        {
+          "x": -4.2105,
+          "y": 28.5267,
+          "z": -0.1435,
+          "ox": 0.015,
+          "oy": 0.0005,
+          "oz": 0.7177,
+          "ow": 0.6962,
+          "mode": 1
+        }
+      ]
+    },
+    "console_point_告别并指引小巴方向": {
+      "name": "告别并指引小巴方向",
+      "summary": "告别并指引小巴方向",
+      "location": [
+        {
+          "x": -3.762334108352661,
+          "y": 33.45990753173828,
+          "z": -0.14849594235420227,
+          "ox": 0.024483323097229004,
+          "oy": -0.0029302602633833885,
+          "oz": -0.9675776362419128,
+          "ow": 0.2513672709465027,
+          "mode": 1
+        }
+      ],
+      "description": "网页控制台编辑点位。"
+    },
+    "console_point_过渡1": {
+      "name": "过渡1",
+      "summary": "过渡1",
+      "location": [
+        {
+          "x": -1.7777700424194336,
+          "y": 10.068418502807617,
+          "z": 0.00606928113847971,
+          "ox": 0.0013941461220383644,
+          "oy": -0.005542418919503689,
+          "oz": 0.5666366219520569,
+          "ow": 0.8239479660987854,
+          "mode": 1
+        }
+      ],
+      "description": "网页控制台编辑点位。"
+    },
+    "console_point_点咖啡": {
+      "name": "点咖啡",
+      "summary": "点咖啡",
+      "location": [
+        {
+          "x": -0.20988444983959198,
+          "y": 14.062864303588867,
+          "z": -0.016537927091121674,
+          "ox": -0.01685129664838314,
+          "oy": 0.01584489457309246,
+          "oz": 0.6170927882194519,
+          "ow": 0.7865504026412964,
+          "mode": 1
+        }
+      ],
+      "description": "网页控制台编辑点位。"
+    }
+  }
+}

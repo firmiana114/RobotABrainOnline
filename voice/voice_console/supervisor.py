@@ -19,6 +19,7 @@ from .config import (
     DEFAULT_KOKORO_VOICE,
 )
 from .dialogue import DialogueStore
+from .dialogue_catalog import DialogueFileCatalog
 
 
 logger = logging.getLogger(__name__)
@@ -27,14 +28,18 @@ POST_WAIT_LINE = re.compile(r"^\[route\] post-wait (start|complete) seconds=([0-
 STARTUP_LINE = re.compile(r"^\[startup\]\s+([a-z_]+)\s+(.+)$")
 CONTROL_LINE = re.compile(r"^\[control\]\s+([a-z_]+)(?:\s+.*)?$")
 TTS_LINE = re.compile(r"^\[tts\]\s+([a-z_]+)\s+(.+)$")
+INTERACTION_LINE = re.compile(r"^\[interaction\]\s+(.+)$")
 SAFE_NAV_LINE = re.compile(r"\[(?:nav_status|goal|arm)\]")
 SENSITIVE_MARKERS = ("用户问题", "识别", "Qwen", "导览:", "等待你说完", "正在听你说话")
+INTERACTION_EVENT_LIMIT = 200
+INTERACTION_TEXT_LIMIT = 500
 
 
 class TourSupervisor:
     def __init__(self, config: ConsoleConfig):
         self.config = config
         self.store = DialogueStore(config.dialogue_file, config.route_file, config.qa_context_file, config.map_root)
+        self.catalog = DialogueFileCatalog(self.store)
         self.process: subprocess.Popen | None = None
         self.stop_event = threading.Event()
         self.status = {
@@ -48,6 +53,7 @@ class TourSupervisor:
             "updated_at": self._now(),
         }
         self.route_names: list[str] = []
+        self.interaction_lock = threading.Lock()
 
     @staticmethod
     def _now() -> str:
@@ -72,6 +78,35 @@ class TourSupervisor:
             except OSError:
                 pass
             raise
+
+    def _reset_interactions(self) -> None:
+        path = self.config.interaction_log_file
+        path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with self.interaction_lock:
+                path.write_text("", encoding="utf-8")
+        except OSError as exc:
+            logger.exception("重置交互事件文件失败：path=%s", path)
+            raise RuntimeError(f"无法重置交互事件文件：{path}") from exc
+
+    def _append_interaction(self, payload: dict) -> None:
+        event = dict(payload)
+        if "text" in event:
+            event["text"] = str(event["text"])[:INTERACTION_TEXT_LIMIT]
+        event["created_at"] = self._now()
+        event["sequence"] = int(time.time() * 1000)
+        path = self.config.interaction_log_file
+        path.parent.mkdir(parents=True, exist_ok=True)
+        line = json.dumps(event, ensure_ascii=False, separators=(",", ":"))
+        with self.interaction_lock:
+            with path.open("a", encoding="utf-8") as stream:
+                stream.write(line + "\n")
+            lines = path.read_text(encoding="utf-8").splitlines()
+            if len(lines) > INTERACTION_EVENT_LIMIT:
+                path.write_text(
+                    "\n".join(lines[-INTERACTION_EVENT_LIMIT:]) + "\n",
+                    encoding="utf-8",
+                )
 
     def _command(self) -> list[str]:
         navigation_script = self.config.navigation_project / "nav_route_then_speak.py"
@@ -111,6 +146,9 @@ class TourSupervisor:
             "--control-port",
             os.environ.get("TOUR_CONTROL_PORT", "8766"),
         ]
+        aplay_device = os.environ.get("APLAY_DEVICE")
+        if aplay_device:
+            command.extend(["--aplay-device", aplay_device])
         if os.environ.get("ENABLE_SEARCH", "1") == "1":
             command.append("--enable-search")
         return command
@@ -123,6 +161,27 @@ class TourSupervisor:
     def _handle_line(self, line: str) -> None:
         line = line.strip()
         if not line:
+            return
+        interaction = INTERACTION_LINE.match(line)
+        if interaction:
+            try:
+                payload = json.loads(interaction.group(1))
+                if isinstance(payload, dict):
+                    try:
+                        self._append_interaction(payload)
+                    except OSError:
+                        logger.exception(
+                            "保存交互事件失败：path=%s event_type=%s",
+                            self.config.interaction_log_file,
+                            payload.get("type"),
+                        )
+                        return
+                    if payload.get("type") == "question":
+                        self._write_status(speech_state="回答中")
+                    elif payload.get("type") == "latency":
+                        self._write_status(speech_state="监听中")
+            except json.JSONDecodeError:
+                logger.warning("交互事件解析失败：line_length=%s", len(line))
             return
         match = ROUTE_LINE.match(line)
         if match:
@@ -224,11 +283,13 @@ class TourSupervisor:
                 pass
 
     def run(self) -> int:
-        self.store.sync_runtime_files(backup=False)
+        self._reset_interactions()
+        activation = self.catalog.activate()
         self._load_route_names()
         command = self._command()
         logger.info(
-            "准备启动导览：route=%s qa_context=%s navigation_script=%s wait_adapter=%s",
+            "准备启动导览：dialogue=%s route=%s qa_context=%s navigation_script=%s wait_adapter=%s",
+            activation["dialogue_file"],
             self.config.route_file,
             self.config.qa_context_file,
             self.config.navigation_project / "nav_route_then_speak.py",

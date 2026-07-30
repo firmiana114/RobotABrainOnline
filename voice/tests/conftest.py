@@ -20,6 +20,7 @@ def config_and_store(tmp_path: Path):
         route_file=dialogue.parent / "dialogue_0_route.json",
         qa_context_file=tmp_path / "guide_qa_context.txt",
         runtime_status_file=tmp_path / "runtime" / "tour_status.json",
+        interaction_log_file=tmp_path / "runtime" / "interactions.jsonl",
         navigation_project=tmp_path / "navigation",
         map_root=Path("/home/unitree"),
         navigation_service="voice-navigation.service",

@@ -1,7 +1,34 @@
+import json
 import logging
 
 from voice_console.config import DEFAULT_KOKORO_REPO_ID, DEFAULT_KOKORO_VOICE
-from voice_console.supervisor import TourSupervisor
+from voice_console.supervisor import (
+    INTERACTION_EVENT_LIMIT,
+    INTERACTION_TEXT_LIMIT,
+    TourSupervisor,
+)
+
+
+def test_supervisor_reactivates_saved_dialogue_selection(config_and_store):
+    config, store = config_and_store
+    alternate_file = config.dialogue_file.with_name("dialogue_1.json")
+    alternate_data = store.load()
+    alternate_data["opening"]["handshake_welcome"] = "监督进程备用台词。"
+    alternate_file.write_text(
+        json.dumps(alternate_data, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    TourSupervisor(config).catalog.activate("dialogue_1.json")
+    activation = TourSupervisor(config).catalog.activate()
+
+    assert activation["dialogue_file"] == "dialogue_1.json"
+    route = json.loads(config.route_file.read_text(encoding="utf-8"))
+    assert any(
+        "监督进程备用台词。" in str(segment.get("text") or "")
+        for node in route
+        for segment in node.get("segments", [])
+    )
 
 
 def test_tour_command_uses_yunxi_voice_by_default(config_and_store, monkeypatch):
@@ -83,3 +110,22 @@ def test_supervisor_tracks_preheated_task_lifecycle(config_and_store, monkeypatc
     supervisor._handle_line("[control] tour_stopped")
     assert supervisor.status["status"] == "stopped"
     assert supervisor.status["speech_state"] == "已预热"
+
+
+def test_supervisor_bounds_interaction_history_and_text(config_and_store):
+    config, _store = config_and_store
+    supervisor = TourSupervisor(config)
+
+    for index in range(INTERACTION_EVENT_LIMIT + 5):
+        supervisor._append_interaction(
+            {
+                "type": "question",
+                "text": f"{index}-" + ("问" * (INTERACTION_TEXT_LIMIT + 20)),
+            }
+        )
+
+    lines = config.interaction_log_file.read_text(encoding="utf-8").splitlines()
+    events = [json.loads(line) for line in lines]
+    assert len(events) == INTERACTION_EVENT_LIMIT
+    assert events[0]["text"].startswith("5-")
+    assert len(events[-1]["text"]) == INTERACTION_TEXT_LIMIT

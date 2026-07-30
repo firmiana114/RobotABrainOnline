@@ -19,6 +19,7 @@ class ConsoleConfig:
     route_file: Path
     qa_context_file: Path
     runtime_status_file: Path
+    interaction_log_file: Path
     navigation_project: Path
     map_root: Path
     navigation_service: str
@@ -41,6 +42,7 @@ class ConsoleConfig:
             route_file=Path(os.environ.get("VOICE_ROUTE_FILE", str(root / "conf" / "dialogue_0_route.json"))),
             qa_context_file=Path(os.environ.get("VOICE_QA_CONTEXT_FILE", str(root / "guide_qa_context.txt"))),
             runtime_status_file=Path(os.environ.get("VOICE_RUNTIME_STATUS_FILE", str(root / "runtime" / "tour_status.json"))),
+            interaction_log_file=Path(os.environ.get("VOICE_INTERACTION_LOG_FILE", str(root / "runtime" / "interactions.jsonl"))),
             navigation_project=Path(
                 os.environ.get(
                     "VOICE_NAVIGATION_PROJECT",

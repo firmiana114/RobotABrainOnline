@@ -37,7 +37,7 @@ zh_pipeline = KPipeline(
 t1 = time.perf_counter()
 print(f"模型加载耗时: {(t1 - t0) * 1000:.2f} ms")
 
-text = "这里是清华大学无锡应用技术研究院。"
+text = "这里是滨湖复星人形机器人产业园。"
 
 print("开始合成:", text)
 t2 = time.perf_counter()

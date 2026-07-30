@@ -3,6 +3,10 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 
+# Editor and timestamped backup snapshots
+*.bak
+*.bak-*
+
 # CMake/colcon and generated runtime files
 example/build_docker/
 custom_action_ws/build/
@@ -16,6 +20,9 @@ voice/hf_cache/
 voice/runtime/
 voice/*.whl
 voice/guide_cache/*.wav
+voice/conf/*_route.json
+voice/conf/*_qa_context.txt
+voice/guide_qa_context.txt
 
 # ROS and application logs
 *.log

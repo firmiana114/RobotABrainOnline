@@ -60,7 +60,7 @@ def test_interrupted_guide_does_not_advance_before_answer_finishes():
 
     app = FakeApp([interrupt_playback, False])
 
-    def answer(_question):
+    def answer(_question, _timing=None):
         answer_started.set()
         release_answer.wait(1)
         events.append("answer-finished")
@@ -95,7 +95,7 @@ def test_wake_at_natural_wav_boundary_still_belongs_to_current_segment():
         return False
 
     app = FakeApp([natural_finish_then_wake, False])
-    run_segment(app, coordinator, answered.append)
+    run_segment(app, coordinator, lambda question, _timing=None: answered.append(question))
 
     assert answered == ["边界问题"]
     assert len(app.play_calls) == 2
@@ -119,7 +119,7 @@ def test_partial_wake_claims_session_before_delayed_final_result():
     run_segment(
         app,
         coordinator,
-        answered.append,
+        lambda question, _timing=None: answered.append(question),
         question_timeout=0.2,
         question_settle_time=0.01,
     )
@@ -150,7 +150,7 @@ def test_slow_inference_keeps_guide_paused():
 
     app = FakeApp([interrupt_playback, False])
 
-    def slow_answer(_question):
+    def slow_answer(_question, _timing=None):
         inference_started.set()
         release_inference.wait(1)
 
@@ -304,8 +304,13 @@ def test_route_interrupt_answer_enables_resume_notice(monkeypatch):
     navigation = pytest.importorskip("nav_route_then_speak")
     calls = []
 
-    def fake_answer_then_resume(_app, question, announce_resume=False):
-        calls.append((question, announce_resume))
+    def fake_answer_then_resume(
+        _app,
+        question,
+        announce_resume=False,
+        latency_timing=None,
+    ):
+        calls.append((question, announce_resume, latency_timing))
 
     def fake_run(_app, _coordinator, _text, _index, answer, **_kwargs):
         answer("打断问题")
@@ -316,7 +321,7 @@ def test_route_interrupt_answer_enables_resume_notice(monkeypatch):
 
     navigation.speak_with_interrupt_resume(app, "当前导览台词", 2)
 
-    assert calls == [("打断问题", True)]
+    assert calls == [("打断问题", True, None)]
 
 
 def test_interrupt_resume_notice_uses_required_phrase(monkeypatch):
@@ -360,14 +365,14 @@ def test_idle_answer_does_not_enable_resume_notice(monkeypatch):
     monkeypatch.setattr(
         navigation,
         "answer_then_resume",
-        lambda _app, question, announce_resume=False: calls.append(
-            (question, announce_resume)
+        lambda _app, question, announce_resume=False, latency_timing=None: calls.append(
+            (question, announce_resume, latency_timing)
         ),
     )
 
     navigation.answer_background_question(app, "空闲问题")
 
-    assert calls == [("空闲问题", False)]
+    assert calls == [("空闲问题", False, None)]
 
 
 def test_duplicate_final_result_is_consumed_once_and_not_reanswered_as_idle():
@@ -460,6 +465,22 @@ def test_route_stt_ignores_wake_word_while_preheated_but_not_running(monkeypatch
     navigation.RouteSTTCallback(app).on_event(Result())
 
     assert app.stop_requests == 0
+
+
+def test_guide_context_selection_handles_location_and_unrelated_questions():
+    navigation = pytest.importorskip("nav_route_then_speak")
+    context = (
+        "【点咖啡】\n这里可以安排咖啡车。\n\n"
+        "【产业园】\n园区聚焦人形机器人产业。"
+    )
+
+    location = navigation.select_relevant_guide_context("小智，你在哪里？", context)
+    relevant = navigation.select_relevant_guide_context("介绍一下园区机器人产业", context)
+    unrelated = navigation.select_relevant_guide_context("一加一等于几？", context)
+
+    assert "滨湖复星人形机器人产业园" in location
+    assert "园区聚焦人形机器人产业" in relevant
+    assert unrelated == ""
 
 
 def test_preheated_route_reloads_configuration_when_task_starts(monkeypatch, tmp_path):

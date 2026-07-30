@@ -38,6 +38,10 @@ clean_api_key = None
 clean_tts_text = None
 logger = logging.getLogger("voice_route")
 INTERRUPT_RESUME_NOTICE = "如果没有别的问题，我将继续导览。"
+BACKGROUND_COMMANDS = {
+    "coffee_delivery_run": ("send_delivery_task.py", "run"),
+}
+BACKGROUND_COMMAND_TIMEOUT_SECONDS = 30.0
 
 
 class TourCancelled(RuntimeError):
@@ -66,6 +70,111 @@ def load_qa_context(path, max_chars):
         print(f"[voice] qa context truncated to {max_chars} chars", flush=True)
     print(f"[voice] loaded qa context: {context_path} ({len(text)} chars)", flush=True)
     return text
+
+
+GUIDE_CONTEXT_QUERY_KEYWORDS = (
+    "园区", "复星", "g1", "点位", "展项", "展厅", "展示", "展墙", "参观", "导览", "讲解",
+    "路线", "开园", "企业", "厂房", "产业", "入驻", "招商", "配套", "停车", "餐厅",
+    "便利店", "苏宁", "面积", "投资", "容积率", "机器人", "这里", "这个地方", "刚才",
+    "在哪里", "在哪", "位置", "什么位置", "这里是哪里", "所在", "地址",
+)
+LOCATION_QUERY_KEYWORDS = ("你在哪里", "你在哪", "你在什么位置", "这里是哪里", "当前位置", "你的位置", "所在位置")
+REALTIME_QUERY_KEYWORDS = ("今天", "现在", "实时", "新闻", "天气", "股价", "几点", "日期", "星期", "路况")
+GUIDE_CONTEXT_STOPWORDS = {
+    "什么", "怎么", "可以", "一下", "一个", "我们", "你们", "这个", "那个", "这里", "那里",
+    "请问", "请你", "帮我", "知道", "介绍", "讲讲", "多少", "哪些", "有关", "相关",
+}
+GUIDE_CONTEXT_NOISE_TERMS = ("介绍", "请介", "请介绍", "一下", "讲讲", "帮我", "请问")
+
+
+def split_guide_context_sections(text):
+    sections = []
+    title = "导览知识库"
+    body = []
+
+    def flush():
+        nonlocal body
+        content = "\n".join(line for line in body if line.strip()).strip()
+        if content:
+            sections.append((title, content))
+        body = []
+
+    for raw_line in (text or "").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line.startswith("【") and line.endswith("】"):
+            flush()
+            title = line.strip("【】") or title
+            continue
+        body.append(line)
+    flush()
+    return sections
+
+
+def guide_context_terms(text):
+    lowered = (text or "").lower()
+    terms = set(re.findall(r"[a-z0-9]+", lowered))
+    chinese = re.sub(r"[^\u4e00-\u9fff]", "", lowered)
+    for size in (2, 3, 4):
+        for index in range(0, max(0, len(chinese) - size + 1)):
+            term = chinese[index:index + size]
+            if term in GUIDE_CONTEXT_STOPWORDS:
+                continue
+            if any(noise in term for noise in GUIDE_CONTEXT_NOISE_TERMS):
+                continue
+            terms.add(term)
+    return terms
+
+
+def select_relevant_guide_context(question, qa_context, max_sections=3, max_chars=1800):
+    question = (question or "").strip()
+    qa_context = (qa_context or "").strip()
+    if not question or not qa_context:
+        return ""
+
+    lowered_question = question.lower()
+    is_location_query = any(keyword in lowered_question for keyword in LOCATION_QUERY_KEYWORDS)
+    if is_location_query:
+        return "【当前位置】\n小智当前所在位置是滨湖复星人形机器人产业园。"
+    has_guide_keyword = any(keyword in lowered_question for keyword in GUIDE_CONTEXT_QUERY_KEYWORDS)
+    question_terms = guide_context_terms(question)
+    if not question_terms and not has_guide_keyword:
+        return ""
+
+    scored = []
+    for title, body in split_guide_context_sections(qa_context):
+        section_text = f"{title}\n{body}"
+        section_terms = guide_context_terms(section_text)
+        overlap = question_terms & section_terms
+        score = len(overlap)
+        if title and title in question:
+            score += 8
+        if any(keyword in section_text.lower() and keyword in lowered_question for keyword in GUIDE_CONTEXT_QUERY_KEYWORDS):
+            score += 2
+        if score > 0:
+            scored.append((score, title, body))
+
+    if not scored:
+        return "" if not has_guide_keyword else qa_context[:max_chars].rstrip()
+    ranked = sorted(scored, key=lambda item: item[0], reverse=True)
+    if not has_guide_keyword and ranked[0][0] < 2:
+        return ""
+
+    selected = []
+    total = 0
+    min_score = max(2, ranked[0][0] - 1) if ranked and ranked[0][0] >= 4 else (2 if ranked and ranked[0][0] >= 2 else 1)
+    for _score, title, body in [item for item in ranked if item[0] >= min_score][:max_sections]:
+        section = f"【{title}】\n{body}".strip()
+        remaining = max_chars - total
+        if remaining <= 0:
+            break
+        if len(section) > remaining:
+            section = section[:remaining].rstrip()
+        selected.append(section)
+        total += len(section) + 2
+    return "\n\n".join(selected).strip()
+
 
 
 def normalize_goal(item):
@@ -107,15 +216,33 @@ def load_speech_segments(item, base_dir):
                 if not speech_path.is_absolute():
                     speech_path = base_dir / speech_path
                 text = speech_path.read_text(encoding="utf-8-sig").strip()
-            if not text:
+            action = seg.get("action") or seg.get("action_name")
+            if not text and not action:
                 continue
             loaded_segment = {
                 "text": text,
-                "action": seg.get("action") or seg.get("action_name"),
+                "action": action,
                 "speak_with_action": bool(seg.get("speak_with_action", True)),
             }
             if "post_wait_seconds" in seg:
                 loaded_segment["post_wait_seconds"] = seg["post_wait_seconds"]
+            if "release_after_seconds" in seg:
+                loaded_segment["release_after_seconds"] = seg["release_after_seconds"]
+            if "speak_during_navigation" in seg:
+                if not isinstance(seg["speak_during_navigation"], bool):
+                    raise ValueError("speak_during_navigation must be a boolean")
+                loaded_segment["speak_during_navigation"] = seg["speak_during_navigation"]
+            if "background_command" in seg:
+                command = str(seg["background_command"])
+                if command not in BACKGROUND_COMMANDS:
+                    raise ValueError(f"unsupported background command: {command}")
+                loaded_segment["background_command"] = command
+                loaded_segment["background_command_name"] = str(
+                    seg.get("background_command_name") or command
+                )
+                loaded_segment["background_command_once_key"] = str(
+                    seg.get("background_command_once_key") or command
+                )
             result.append(loaded_segment)
         return result
 
@@ -281,6 +408,41 @@ def best_mono_channel(data, channels):
     return frames[:, best].astype(np.int16).tobytes()
 
 
+def remember_idle_stt_start(app):
+    if getattr(app, "route_idle_stt_started_at", None) is None:
+        app.route_idle_stt_started_at = time.monotonic()
+
+
+def consume_idle_stt_timing(app):
+    ended_at = time.monotonic()
+    started_at = getattr(app, "route_idle_stt_started_at", None) or ended_at
+    app.route_idle_stt_started_at = None
+    return started_at, ended_at
+
+
+def ms_between(start, end):
+    if start is None or end is None:
+        return None
+    return max(0.0, (end - start) * 1000.0)
+
+
+def fmt_ms(value):
+    if value is None:
+        return "unknown"
+    return f"{value:.1f}"
+
+
+def emit_interaction_event(event_type, **payload):
+    event = {"type": event_type, **payload}
+    print("[interaction] " + json.dumps(event, ensure_ascii=False), flush=True)
+
+
+def unpack_question_payload(payload):
+    if isinstance(payload, dict):
+        return (payload.get("text") or "", payload)
+    return (payload or "", None)
+
+
 class RouteSTTCallback(RecognitionCallback):
     def __init__(self, app):
         self.app = app
@@ -318,13 +480,17 @@ class RouteSTTCallback(RecognitionCallback):
                 if mode in ("guide", "interrupted"):
                     session_id = coordinator.claim_interrupt()
                     if session_id is not None:
+                        question = self.app.remove_wake_word(text)
+                        question = self.app.strip_guide_echo(question)
                         logger.info(
-                            "检测到播报中唤醒词：phase=partial session=%s text_length=%s",
+                            "检测到播报中唤醒词：phase=partial session=%s text_length=%s partial_question_length=%s",
                             session_id,
                             len(text),
+                            len(question),
                         )
                         self.app.request_stop_guide()
                 else:
+                    remember_idle_stt_start(self.app)
                     logger.info("检测到空闲唤醒词中间结果：text_length=%s", len(text))
             return
 
@@ -339,7 +505,7 @@ class RouteSTTCallback(RecognitionCallback):
             else:
                 question = text
             question = self.app.strip_guide_echo(question)
-            accepted = coordinator.submit_interrupt_part(question)
+            accepted = coordinator.submit_interrupt_part(question, stt_ended_at=time.monotonic())
             logger.info(
                 "收到播报打断最终结果：accepted=%s text_length=%s",
                 accepted,
@@ -351,7 +517,12 @@ class RouteSTTCallback(RecognitionCallback):
             question = self.app.remove_wake_word(text)
             question = self.app.strip_guide_echo(question)
             if question:
-                coordinator.submit_idle_question(question)
+                started_at, ended_at = consume_idle_stt_timing(self.app)
+                coordinator.submit_idle_question(
+                    question,
+                    stt_started_at=started_at,
+                    stt_ended_at=ended_at,
+                )
 
 
 class ArecordSTT:
@@ -508,6 +679,13 @@ def start_answer_pipeline(app):
     audio_queue = queue.Queue()
     errors = []
     errors_lock = threading.Lock()
+    metrics = {
+        "tts_started_at": None,
+        "tts_finished_at": None,
+        "synth_ms_total": 0.0,
+        "play_ms_total": 0.0,
+    }
+    metrics_lock = threading.Lock()
 
     def synth_worker():
         while True:
@@ -517,7 +695,14 @@ def start_answer_pipeline(app):
                     audio_queue.put(None)
                     return
                 index, sentence = item
+                synth_started_at = time.monotonic()
+                with metrics_lock:
+                    if metrics["tts_started_at"] is None:
+                        metrics["tts_started_at"] = synth_started_at
                 wav_path = synth_answer_sentence(app, sentence, index)
+                synth_finished_at = time.monotonic()
+                with metrics_lock:
+                    metrics["synth_ms_total"] += (synth_finished_at - synth_started_at) * 1000.0
                 if wav_path is not None:
                     audio_queue.put((index, wav_path))
             except Exception as exc:
@@ -534,7 +719,12 @@ def start_answer_pipeline(app):
                 if item is None:
                     return
                 _, wav_path = item
+                play_started_at = time.monotonic()
                 play_answer_wav(app, wav_path)
+                play_finished_at = time.monotonic()
+                with metrics_lock:
+                    metrics["play_ms_total"] += (play_finished_at - play_started_at) * 1000.0
+                    metrics["tts_finished_at"] = play_finished_at
             except Exception as exc:
                 logger.exception("回答音频播放失败")
                 with errors_lock:
@@ -546,10 +736,10 @@ def start_answer_pipeline(app):
     play_thread = threading.Thread(target=play_worker, daemon=True)
     synth_thread.start()
     play_thread.start()
-    return synth_queue, audio_queue, synth_thread, play_thread, errors
+    return synth_queue, audio_queue, synth_thread, play_thread, errors, metrics
 
 
-def stream_qwen_and_speak_by_sentence(app, question, max_sentences):
+def stream_qwen_and_speak_by_sentence(app, question, max_sentences, latency_timing=None):
     question = question.strip()
     if not question:
         return
@@ -559,16 +749,16 @@ def stream_qwen_and_speak_by_sentence(app, question, max_sentences):
     now = time.localtime()
     today = time.strftime("%Y年%m月%d日", now) + " " + weekdays[now.tm_wday]
     qa_context = getattr(app.args, "qa_context_text", "") or ""
+    relevant_context = select_relevant_guide_context(question, qa_context)
     context_prompt = ""
-    if qa_context:
+    if relevant_context:
         context_prompt = (
-            "你现在是导览机器人小智。下面的【导览知识库】是本次导览的最高优先级资料，"
-            "必须在之后每一次回答中主动记住并优先使用。只要用户问题与园区、展项、路线、机构、人物、技术、导览词有关，"
-            "就必须先从【导览知识库】中查找答案并按其中表述回答；不要编造与资料冲突的内容。"
-            "如果资料中没有明确答案，只说‘资料中没有提到’，再用一句通用知识简短补充。"
-            "回答要口语化、简短，适合语音播报，不要Markdown，不要列项目符号。\n"
+            "下面的【导览知识库】只用于回答与园区、点位、展项、路线、讲解词有关的问题。"
+            "如果用户问题与导览资料无关，请忽略这份资料并按普通对话直接回答。"
+            "如果问题与导览相关，请优先使用资料；资料没有明确答案时，可以说明资料未提到，"
+            "再给出一句简短通用回答。回答要口语化，适合语音播报，不要Markdown，不要列项目符号。\n"
             "【导览知识库开始】\n"
-            f"{qa_context}\n"
+            f"{relevant_context}\n"
             "【导览知识库结束】\n"
         )
     prompt = (
@@ -578,23 +768,40 @@ def stream_qwen_and_speak_by_sentence(app, question, max_sentences):
         f"用户问题：{question}"
     )
 
-    app.chat_messages.append({"role": "user", "content": prompt})
     system_msg = app.chat_messages[:1]
     history = app.chat_messages[1:]
     if len(history) > 12:
         history = history[-12:]
-    messages = system_msg + history
-    app.chat_messages = messages
+    messages = system_msg + history + [{"role": "user", "content": prompt}]
+    app.chat_messages = system_msg + history + [{"role": "user", "content": question}]
 
+    is_realtime_query = any(keyword in question for keyword in REALTIME_QUERY_KEYWORDS)
     extra_body = None
-    if app.args.enable_search:
+    if app.args.enable_search and is_realtime_query:
         extra_body = {"enable_search": True, "search_options": {"forced_search": True, "search_strategy": "turbo"}}
 
-    print(f"\nQwen(stream): started question_length={len(question)}", flush=True)
+    latency_timing = latency_timing or {}
+    request_started_at = time.monotonic()
+    stt_started_at = latency_timing.get("stt_started_at") or latency_timing.get("stt_ended_at") or request_started_at
+    stt_ended_at = latency_timing.get("stt_ended_at") or request_started_at
+
+    emit_interaction_event(
+        "question",
+        text=question,
+        source=latency_timing.get("source") or "unknown",
+        guide_context_chars=len(relevant_context),
+    )
+    print(
+        f"\nQwen(stream): started question_length={len(question)} guide_context_chars={len(relevant_context)}",
+        flush=True,
+    )
     answer_parts = []
     pending = ""
     spoken = 0
-    synth_queue, audio_queue, synth_thread, play_thread, errors = start_answer_pipeline(app)
+    first_token_at = None
+    reasoning_started_at = time.monotonic()
+    reasoning_finished_at = None
+    synth_queue, audio_queue, synth_thread, play_thread, errors, tts_metrics = start_answer_pipeline(app)
 
     try:
         stream = app.qwen_client.chat.completions.create(
@@ -615,6 +822,8 @@ def stream_qwen_and_speak_by_sentence(app, question, max_sentences):
             piece = getattr(delta, "content", None) or ""
             if not piece:
                 continue
+            if first_token_at is None:
+                first_token_at = time.monotonic()
             answer_parts.append(piece)
             pending += piece
             sentences, pending = split_complete_sentences(pending)
@@ -631,7 +840,10 @@ def stream_qwen_and_speak_by_sentence(app, question, max_sentences):
                 if tail[-1] not in "。！？!?":
                     tail += "。"
                 synth_queue.put((spoken, tail))
+        reasoning_finished_at = time.monotonic()
     finally:
+        if reasoning_finished_at is None:
+            reasoning_finished_at = time.monotonic()
         synth_queue.put(None)
         synth_queue.join()
         audio_queue.join()
@@ -644,14 +856,50 @@ def stream_qwen_and_speak_by_sentence(app, question, max_sentences):
     final_answer = "".join(answer_parts).strip()
     if final_answer:
         app.chat_messages.append({"role": "assistant", "content": final_answer})
+    emit_interaction_event("answer", text=final_answer, sentences=spoken)
+    answer_finished_at = time.monotonic()
+    stt_ms = ms_between(stt_started_at, stt_ended_at)
+    reasoning_ms = ms_between(reasoning_started_at, reasoning_finished_at)
+    first_token_ms = ms_between(reasoning_started_at, first_token_at)
+    tts_started_at = tts_metrics.get("tts_started_at") or reasoning_finished_at
+    tts_finished_at = tts_metrics.get("tts_finished_at") or answer_finished_at
+    tts_ms = ms_between(tts_started_at, tts_finished_at)
+    total_ms = ms_between(stt_started_at, answer_finished_at)
     logger.info(
-        "流式回答播放完成：sentences=%s answer_length=%s",
+        "问答耗时统计：stt_ms=%s reasoning_ms=%s tts_ms=%s total_ms=%s first_token_ms=%s "
+        "synth_sum_ms=%s play_sum_ms=%s source=%s sentences=%s question_length=%s answer_length=%s guide_context_chars=%s",
+        fmt_ms(stt_ms),
+        fmt_ms(reasoning_ms),
+        fmt_ms(tts_ms),
+        fmt_ms(total_ms),
+        fmt_ms(first_token_ms),
+        fmt_ms(tts_metrics.get("synth_ms_total")),
+        fmt_ms(tts_metrics.get("play_ms_total")),
+        latency_timing.get("source") or "unknown",
         spoken,
+        len(question),
         len(final_answer),
+        len(relevant_context),
+    )
+    emit_interaction_event(
+        "latency",
+        stt_ms=fmt_ms(stt_ms),
+        reasoning_ms=fmt_ms(reasoning_ms),
+        tts_ms=fmt_ms(tts_ms),
+        total_ms=fmt_ms(total_ms),
+        first_token_ms=fmt_ms(first_token_ms),
+        synth_sum_ms=fmt_ms(tts_metrics.get("synth_ms_total")),
+        play_sum_ms=fmt_ms(tts_metrics.get("play_ms_total")),
+    )
+    print(
+        "[latency] "
+        f"stt_ms={fmt_ms(stt_ms)} reasoning_ms={fmt_ms(reasoning_ms)} "
+        f"tts_ms={fmt_ms(tts_ms)} total_ms={fmt_ms(total_ms)}",
+        flush=True,
     )
 
 
-def answer_then_resume(app, question, announce_resume=False):
+def answer_then_resume(app, question, announce_resume=False, latency_timing=None):
     after_success = None
     if announce_resume:
         def announce():
@@ -669,7 +917,7 @@ def answer_then_resume(app, question, announce_resume=False):
         app,
         question,
         answer=lambda: stream_qwen_and_speak_by_sentence(
-            app, question, app.args.max_answer_sentences
+            app, question, app.args.max_answer_sentences, latency_timing=latency_timing
         ),
         fallback=lambda: speak_one_answer_sentence(
             app, "抱歉，刚才回答时出现了问题。", 1
@@ -697,8 +945,8 @@ def speak_with_interrupt_resume(app, text, index, cancel_event=None):
         app.route_interrupts,
         text,
         index,
-        answer=lambda question: answer_then_resume(
-            app, question, announce_resume=True
+        answer=lambda question, latency_timing=None: answer_then_resume(
+            app, question, announce_resume=True, latency_timing=latency_timing
         ),
         is_resume=is_resume_command,
         cancelled=cancelled,
@@ -733,7 +981,8 @@ def is_resume_command(text):
     )
 
 
-def answer_background_question(app, question):
+def answer_background_question(app, payload):
+    question, latency_timing = unpack_question_payload(payload)
     question = question.strip()
     if not question:
         return
@@ -743,42 +992,84 @@ def answer_background_question(app, question):
 
     logger.info("开始处理空闲问答：question_length=%s", len(question))
     with app.route_voice_lock:
-        answer_then_resume(app, question)
+        answer_then_resume(app, question, latency_timing=latency_timing)
 
 
 def background_question_loop(app, stop_event):
     print("[voice] background XiaoZhi question listener enabled.", flush=True)
     while app.running and not stop_event.is_set():
-        question = app.route_interrupts.get_idle_question(timeout=0.1)
-        if question is None:
+        payload = app.route_interrupts.get_idle_question_payload(timeout=0.1)
+        if payload is None:
             continue
         try:
-            answer_background_question(app, question)
+            answer_background_question(app, payload)
         finally:
             app.route_interrupts.idle_task_done()
 
 
 def speak_segment(app, node, segment, index, stt_enabled, action_aliases, cancel_event=None):
-    text = segment["text"]
+    text = str(segment.get("text") or "").strip()
     action = resolve_action_name(segment.get("action"), action_aliases)
     cancel_event = cancel_event or getattr(app, "route_cancel_event", None)
+    action_started = False
+    release_delay = 0.0
 
     if cancel_event is not None and cancel_event.is_set():
         raise TourCancelled("tour task stopped before segment")
 
     with app.route_voice_lock:
-        if action and segment.get("speak_with_action", True):
-            print(f"[route] segment action={action} text={text[:30]}", flush=True)
-            node.send_arm_action(action)
-            if cancel_event is not None and cancel_event.wait(0.15):
-                raise TourCancelled("tour task stopped after arm action")
-            if cancel_event is None:
-                time.sleep(0.15)
+        try:
+            if action and segment.get("speak_with_action", True):
+                print(f"[route] segment action={action} text={text[:30]}", flush=True)
+                action_started = action != "release_arm"
+                release_after = segment.get("release_after_seconds", 0.0)
+                try:
+                    release_delay = max(0.0, float(release_after))
+                except (TypeError, ValueError):
+                    logger.warning(
+                        "无效的手势释放延迟，按 0 秒处理：source_action=%s value_type=%s",
+                        action,
+                        type(release_after).__name__,
+                    )
+                    release_delay = 0.0
+                node.send_arm_action(action)
+                if cancel_event is not None and cancel_event.wait(0.15):
+                    raise TourCancelled("tour task stopped after arm action")
+                if cancel_event is None:
+                    time.sleep(0.15)
 
-        if stt_enabled:
-            speak_with_interrupt_resume(app, text, index, cancel_event=cancel_event)
-        else:
-            speak_playback_only(app, text, index)
+            if not text:
+                logger.info("动作段执行完成：action=%s", action or "")
+                return
+
+            if stt_enabled:
+                speak_with_interrupt_resume(app, text, index, cancel_event=cancel_event)
+            else:
+                speak_playback_only(app, text, index)
+        finally:
+            if action_started:
+                cancelled_before_release = bool(
+                    cancel_event is not None and cancel_event.is_set()
+                )
+                if release_delay > 0 and not cancelled_before_release:
+                    if cancel_event is not None:
+                        cancelled_before_release = cancel_event.wait(release_delay)
+                    else:
+                        time.sleep(release_delay)
+                logger.info(
+                    "台词手势自动释放：source_action=%s delay_seconds=%.3f "
+                    "cancelled_before_release=%s text_length=%s",
+                    action,
+                    release_delay,
+                    cancelled_before_release,
+                    len(text),
+                )
+                released = node.send_arm_action("release_arm")
+                if not released:
+                    logger.warning(
+                        "台词手势释放请求未被桥接服务接受：source_action=%s",
+                        action,
+                    )
 
     if cancel_event is not None and cancel_event.is_set():
         raise TourCancelled("tour task stopped during segment")
@@ -927,8 +1218,98 @@ def build_parser():
     return parser
 
 
+def start_background_command(command_name, voice_project, cancel_event=None):
+    command_spec = BACKGROUND_COMMANDS.get(command_name)
+    if command_spec is None:
+        raise ValueError(f"unsupported background command: {command_name}")
+    script_name, *arguments = command_spec
+    script_path = (Path(voice_project).resolve() / script_name).resolve()
+    project_path = Path(voice_project).resolve()
+    if script_path.parent != project_path or not script_path.is_file():
+        raise FileNotFoundError(f"background command script not found: {script_path}")
+
+    def worker():
+        if cancel_event is not None and cancel_event.is_set():
+            logger.info("后台功能命令已取消：command=%s reason=tour_cancelled", command_name)
+            return
+        started_at = time.perf_counter()
+        logger.info(
+            "后台功能命令开始：command=%s script=%s",
+            command_name,
+            script_path.name,
+        )
+        try:
+            result = subprocess.run(
+                [sys.executable, str(script_path), *arguments],
+                cwd=str(project_path),
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=BACKGROUND_COMMAND_TIMEOUT_SECONDS,
+            )
+            elapsed_seconds = time.perf_counter() - started_at
+            log = logger.info if result.returncode == 0 else logger.error
+            log(
+                "后台功能命令结束：command=%s return_code=%s elapsed_seconds=%.3f "
+                "stdout_length=%s stderr_length=%s",
+                command_name,
+                result.returncode,
+                elapsed_seconds,
+                len(result.stdout or ""),
+                len(result.stderr or ""),
+            )
+        except subprocess.TimeoutExpired:
+            logger.error(
+                "后台功能命令超时：command=%s timeout_seconds=%.1f",
+                command_name,
+                BACKGROUND_COMMAND_TIMEOUT_SECONDS,
+            )
+        except Exception:
+            logger.exception("后台功能命令异常：command=%s", command_name)
+
+    thread = threading.Thread(
+        target=worker,
+        name=f"route-command-{command_name}",
+        daemon=True,
+    )
+    thread.start()
+    return thread
+
+
+def trigger_segment_background_command(
+    segment,
+    voice_project,
+    executed_once_keys,
+    cancel_event=None,
+):
+    command_name = str(segment.get("background_command") or "").strip()
+    if not command_name:
+        return None
+    once_key = str(segment.get("background_command_once_key") or command_name)
+    if once_key in executed_once_keys:
+        logger.info(
+            "后台功能命令跳过重复执行：command=%s once_key=%s",
+            command_name,
+            once_key,
+        )
+        return None
+    executed_once_keys.add(once_key)
+    logger.info(
+        "触发台词后台功能：command=%s display_name=%s once_key=%s",
+        command_name,
+        str(segment.get("background_command_name") or command_name),
+        once_key,
+    )
+    return start_background_command(
+        command_name,
+        voice_project,
+        cancel_event=cancel_event,
+    )
+
+
 def execute_route_once(args, voice_app, node, stt_enabled, cancel_event):
     base_dir = Path(args.route_file).resolve().parent
+    voice_project = Path(getattr(args, "voice_project", base_dir.parent))
     route = load_route(args.route_file)
     action_aliases = parse_action_aliases(args.action_alias)
     args.qa_context_text = load_qa_context(args.qa_context_file, args.qa_context_max_chars)
@@ -942,6 +1323,7 @@ def execute_route_once(args, voice_app, node, stt_enabled, cancel_event):
         f"elapsed_seconds={time.perf_counter() - stage_started:.3f}",
         flush=True,
     )
+    executed_background_commands = set()
 
     for index, item in enumerate(route, start=1):
         if cancel_event.is_set():
@@ -952,27 +1334,68 @@ def execute_route_once(args, voice_app, node, stt_enabled, cancel_event):
         print(f"\n[route] {index}/{len(route)} -> {name}", flush=True)
         if item.get("skip_navigation"):
             print(f"[route] {name} skips navigation", flush=True)
+            navigation_segments = []
+            arrival_segments = list(enumerate(segments))
         else:
             goal = normalize_goal(item)
             node.publish_goal(goal)
-            status = node.wait_arrived(args.goal_timeout, cancel_event=cancel_event)
-            print(f"[route] arrived at {name}: {status}", flush=True)
-
-        if segments:
-            for seg_index, segment in enumerate(segments):
+            navigation_segments = [
+                (seg_index, segment)
+                for seg_index, segment in enumerate(segments)
+                if segment.get("speak_during_navigation")
+            ]
+            arrival_segments = [
+                (seg_index, segment)
+                for seg_index, segment in enumerate(segments)
+                if not segment.get("speak_during_navigation")
+            ]
+            if navigation_segments:
+                logger.info(
+                    "开始边走边说：route=%s segment_count=%s",
+                    name,
+                    len(navigation_segments),
+                )
+            for seg_index, segment in navigation_segments:
                 if cancel_event.is_set():
-                    raise TourCancelled("tour task stopped before speech segment")
-                speak_index = (index - 1) * 100 + seg_index
+                    raise TourCancelled("tour task stopped before navigation speech segment")
+                trigger_segment_background_command(
+                    segment,
+                    voice_project,
+                    executed_background_commands,
+                    cancel_event=cancel_event,
+                )
                 speak_segment(
                     voice_app,
                     node,
                     segment,
-                    speak_index,
+                    (index - 1) * 100 + seg_index,
                     stt_enabled,
                     action_aliases,
                     cancel_event=cancel_event,
                 )
-        else:
+            status = node.wait_arrived(args.goal_timeout, cancel_event=cancel_event)
+            print(f"[route] arrived at {name}: {status}", flush=True)
+
+        if arrival_segments:
+            for seg_index, segment in arrival_segments:
+                if cancel_event.is_set():
+                    raise TourCancelled("tour task stopped before speech segment")
+                trigger_segment_background_command(
+                    segment,
+                    voice_project,
+                    executed_background_commands,
+                    cancel_event=cancel_event,
+                )
+                speak_segment(
+                    voice_app,
+                    node,
+                    segment,
+                    (index - 1) * 100 + seg_index,
+                    stt_enabled,
+                    action_aliases,
+                    cancel_event=cancel_event,
+                )
+        elif not navigation_segments:
             print(f"[route] {name} has no speech, skip speaking", flush=True)
 
     print("[route] finished", flush=True)
@@ -985,10 +1408,13 @@ def precache_route_audio(args, voice_app):
     generated = 0
     for index, item in enumerate(route, start=1):
         for seg_index, segment in enumerate(load_speech_segments(item, base_dir)):
+            text = str(segment.get("text") or "").strip()
+            if not text:
+                continue
             speak_index = (index - 1) * 100 + seg_index
-            wav_path = voice_app.guide_wav_path(speak_index, segment["text"])
+            wav_path = voice_app.guide_wav_path(speak_index, text)
             cached = wav_path.exists() and wav_path.stat().st_size > 1000
-            voice_app.ensure_guide_wav(speak_index, segment["text"])
+            voice_app.ensure_guide_wav(speak_index, text)
             total += 1
             if not cached:
                 generated += 1

@@ -30,13 +30,9 @@ from voice_console.interrupt import play_audio_file
 from voice_console.config import DEFAULT_KOKORO_REPO_ID, DEFAULT_KOKORO_VOICE
 
 
-TOUR_SENTENCES = [
-    "清华大学无锡应用技术研究院成立于2023年，是由清华大学与无锡市人民政府联合共建的科研机构。",
-    "作为清华大学在长三角地区的重要成果转化派出机构，研究院坐落于无锡市滨湖区，旨在发挥清华大学的科技和人才优势，推动校地企紧密合作，促进科技成果产业化，带动地方高新技术产业的发展与转型升级。",
-    "在研发方向上，研究院紧密围绕国家重大战略需求与地方特色产业发展，重点布局了集成电路、人工智能、高端装备、物联网、双碳技术以及生物医学等六大核心技术领域。",
-    "目前，研究院已建成微纳电子与系统芯片、集成电路创新服务平台、能源物联网等30余个研究中心。",
-    "同时，研究院引进了由张亚勤院士牵头的清华大学智能产业研究院，成立了智能产业创新中心，持续赋能前沿技术的研发与应用。",
-]
+# Production route services import TourGuideAssistant from this module. Keep the
+# import-time guide list empty so test text cannot enter production state.
+TOUR_SENTENCES = []
 logger = logging.getLogger("tour_guide")
 KOKORO_CACHE_VERSION = "zh-prosody-v2"
 KOKORO_MAX_CHUNK_PHONEMES = 220
@@ -293,11 +289,13 @@ class TourGuideAssistant:
             {
                 "role": "system",
                 "content": (
-                    "你是清华大学无锡应用技术研究院的中文导览问答助手。"
+                    "你是滨湖复星人形机器人产业园的中文导览问答助手，名字叫小智。"
+                    "你当前所在位置是滨湖复星人形机器人产业园。"
+                    "用户问你在哪里、你在什么位置、这里是哪里时，必须回答滨湖复星人形机器人产业园。"
                     "用户会在导览过程中用“小智”打断你并提问。"
                     "回答要简洁、准确、口语化。"
                     "不要使用Markdown，不要列太长。"
-                    "如果用户问实时信息，可以结合联网搜索结果回答。"
+                    "只有用户明确询问实时信息时，才结合联网搜索结果回答。"
                 ),
             }
         ]
@@ -322,10 +320,8 @@ class TourGuideAssistant:
             return -1
 
         patterns = [
-            r"小\s*智",
-            r"小\s*知",
-            r"小\s*志",
-            r"晓\s*智",
+            r"小\s*[智知志治制致至之只芝]",
+            r"晓\s*[智知志治制致至之只芝]",
         ]
 
         best_end = -1

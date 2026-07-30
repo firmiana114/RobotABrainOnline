@@ -127,7 +127,7 @@ class RouteInterruptCoordinator:
         self._next_session = 0
         self._attempt: dict | None = None
         self._session: dict | None = None
-        self._idle_questions: queue.Queue[str] = queue.Queue(maxsize=idle_queue_size)
+        self._idle_questions: queue.Queue[object] = queue.Queue(maxsize=idle_queue_size)
         self._recent_interrupt_questions: deque[tuple[float, str]] = deque(maxlen=16)
 
     @staticmethod
@@ -158,12 +158,15 @@ class RouteInterruptCoordinator:
                 return None
             if self._session is None:
                 self._next_session += 1
+                now = self._monotonic()
                 self._session = {
                     "id": self._next_session,
                     "attempt_id": self._attempt["id"],
                     "parts": [],
                     "normalized_parts": set(),
                     "last_part_at": None,
+                    "stt_started_at": now,
+                    "stt_ended_at": None,
                 }
                 logger.info(
                     "导览打断已归属：attempt=%s session=%s segment=%s phase=%s",
@@ -180,7 +183,7 @@ class RouteInterruptCoordinator:
         with self._condition:
             return self._session is not None
 
-    def submit_interrupt_part(self, text: str) -> bool:
+    def submit_interrupt_part(self, text: str, stt_ended_at: float | None = None) -> bool:
         text = (text or "").strip("，。！？!?、,. ")
         normalized = self._normalized(text)
         if len(normalized) < 2:
@@ -188,10 +191,14 @@ class RouteInterruptCoordinator:
         with self._condition:
             if self._session is None:
                 return False
+            now = self._monotonic()
             if normalized not in self._session["normalized_parts"]:
                 self._session["parts"].append(text)
                 self._session["normalized_parts"].add(normalized)
-            self._session["last_part_at"] = self._monotonic()
+            self._session["last_part_at"] = now
+            if self._session.get("stt_started_at") is None:
+                self._session["stt_started_at"] = now
+            self._session["stt_ended_at"] = stt_ended_at if stt_ended_at is not None else now
             logger.info(
                 "导览打断问题片段已接收：session=%s parts=%s text_length=%s",
                 self._session["id"],
@@ -252,6 +259,16 @@ class RouteInterruptCoordinator:
                 self._condition.wait(wait_seconds)
             return "，".join(self._session["parts"]).strip("，。！？!?、,. ")
 
+    def get_interrupt_timing(self, session_id: int) -> dict | None:
+        with self._condition:
+            if self._session is None or self._session["id"] != session_id:
+                return None
+            return {
+                "stt_started_at": self._session.get("stt_started_at"),
+                "stt_ended_at": self._session.get("stt_ended_at"),
+                "source": "interrupt",
+            }
+
     def complete_interrupt(self, session_id: int) -> None:
         with self._condition:
             if self._session is None or self._session["id"] != session_id:
@@ -276,33 +293,54 @@ class RouteInterruptCoordinator:
                 self._session = None
                 self._condition.notify_all()
 
-    def submit_idle_question(self, text: str) -> bool:
+    def submit_idle_question(
+        self,
+        text: str,
+        stt_started_at: float | None = None,
+        stt_ended_at: float | None = None,
+    ) -> bool:
         text = (text or "").strip("，。！？!?、,. ")
         normalized = self._normalized(text)
         if len(normalized) < 2:
             return False
         with self._condition:
             if self._session is not None:
-                return self.submit_interrupt_part(text)
+                return self.submit_interrupt_part(text, stt_ended_at=stt_ended_at)
             now = self._monotonic()
             while self._recent_interrupt_questions and self._recent_interrupt_questions[0][0] <= now:
                 self._recent_interrupt_questions.popleft()
             if any(old == normalized for _, old in self._recent_interrupt_questions):
                 logger.info("忽略打断会话的迟到重复结果：text_length=%s", len(text))
                 return False
+        ended_at = stt_ended_at if stt_ended_at is not None else self._monotonic()
+        payload = {
+            "text": text,
+            "stt_started_at": stt_started_at if stt_started_at is not None else ended_at,
+            "stt_ended_at": ended_at,
+            "source": "idle",
+        }
         try:
-            self._idle_questions.put_nowait(text)
+            self._idle_questions.put_nowait(payload)
         except queue.Full:
             logger.warning("空闲问答队列已满，丢弃新问题：text_length=%s", len(text))
             return False
         logger.info("空闲问题已入队：text_length=%s queue_size=%s", len(text), self._idle_questions.qsize())
         return True
 
-    def get_idle_question(self, timeout: float = 0.1) -> str | None:
+    def get_idle_question_payload(self, timeout: float = 0.1) -> dict | None:
         try:
-            return self._idle_questions.get(timeout=timeout)
+            item = self._idle_questions.get(timeout=timeout)
         except queue.Empty:
             return None
+        if isinstance(item, dict):
+            return item
+        return {"text": item, "stt_started_at": None, "stt_ended_at": None, "source": "idle"}
+
+    def get_idle_question(self, timeout: float = 0.1) -> str | None:
+        payload = self.get_idle_question_payload(timeout=timeout)
+        if payload is None:
+            return None
+        return payload.get("text")
 
     def idle_task_done(self) -> None:
         self._idle_questions.task_done()
@@ -315,8 +353,8 @@ def run_interruptible_segment(
     index: int,
     answer: Callable[[str], None],
     is_resume: Callable[[str], bool],
-    question_timeout: float = 1.2,
-    question_settle_time: float = 0.35,
+    question_timeout: float = 2.6,
+    question_settle_time: float = 0.8,
     sleep: Callable[[float], None] = time.sleep,
     cancelled: Callable[[], bool] = lambda: False,
 ) -> None:
@@ -349,7 +387,7 @@ def run_interruptible_segment(
             if is_resume(question):
                 logger.info("收到继续导览指令：session=%s", session_id)
             elif question:
-                answer(question)
+                answer(question, coordinator.get_interrupt_timing(session_id))
             else:
                 logger.info("导览打断未收到完整问题：session=%s", session_id)
         finally:

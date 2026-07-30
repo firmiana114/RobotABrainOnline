@@ -113,6 +113,17 @@ docker run --rm unitree_slam_example_new:humble check
 - 新增 `[tts] synthesis_ready` INFO 诊断，记录字符数、分块数、最大音素数、停顿总时长和采样数，不记录台词全文。
 - NX 离线 CUDA 验证原异常段变为 4 块、最大 215 音素、37.670 秒和约 4.91 字/秒；全路线 34 段拆为 65 块，最大 216 音素，无块接近硬限制。候选副本全量模拟测试 `66 passed`；验证 WAV 已删除，未播放音频或发送机器人动作。
 
+## 多台词文件热更新
+
+- “点位台词热更新”会枚举 `voice/conf/*.json` 并排除派生的 `*_route.json`，通过下拉框切换要加载、修改和保存的台词文件，不接受手工路径。
+- 后端校验文件名、真实路径和目录边界；非默认文件保存时生成同名 `_route.json` 与 `_qa_context.txt`。点击“启动导览”或“重启导览服务”会把当前选择生成到正式运行路线并原子记录到 `voice/runtime/active_dialogue.json`；路线、问答上下文和 `.bak` 快照均为本机派生内容，现由 `.gitignore` 排除且不再跟踪。
+- 新增 INFO/WARNING 日志记录文件列表刷新、选择、保存行数和拒绝原因，不记录台词正文；接口回归覆盖文件切换、独立保存、派生文件排除和路径穿越拒绝。
+
+## dialogue_1 扩展功能段
+
+- 台词段支持 `{"speak_during_navigation":true}`（边走边说，`false` 或省略为到达后播报）和 `{"background_command":"coffee_delivery_run"}`（异步调用 `voice/send_delivery_task.py run`）；旧步骤级边走边说字段仍兼容，前端加载后会显示为台词功能段；opening 的问候与欢迎台词合并为一次握手下的连续播报，两句结束后才自动释放手臂。
+- 后台命令严格使用白名单且单次导览按 once key 去重；所有随台词触发的非 `release_arm` 手势会在该段语音播放完成后自动发送 `release_arm`，`release_after_seconds` 表示播完后的额外延迟；问答只选择相关导览上下文并仅为实时问题启用联网搜索，控制台展示问答与 STT/推理/TTS 耗时，运行时交互记录限制为最近 200 条且单条文本最多 500 字。
+
 ## 已验证事实
 
 - 2026-07-28 新增 `PROJECT_GUIDE.md`，并从根目录 `README.md` 提供入口；文档依据当前 Python、C++、Docker、systemd、配置和测试实现整理。
@@ -121,7 +132,7 @@ docker run --rm unitree_slam_example_new:humble check
 - `docker run --rm unitree_slam_example_new:humble check` 成功；六个节点 ELF 的 `ldd` 无缺失依赖，RUNPATH 指向镜像内 SDK 和自定义 Action。
 - 无宿主 SDK 上下文仍可使用既有镜像编译 `custom_action_ws` 和六个节点。
 - Compose、Shell 语法、Python compileall 和 systemd unit 静态检查通过。
-- 提交前最终 NX 主工作区测试结果应以本轮 Git 与同步步骤记录为准；候选副本当前为 `61 passed`。
+- opening 合并路线检查确认 `dialogue_0/1` 均只生成一次握手；测试 fixture、问答计时回调、上下文选择、交互接口和有界记录测试已同步，NX 全套离线测试为 `84 passed`，未播放音频、启动导览或发送导航/机械臂任务。
 - Humble 临时订阅者已收到 HTTP 桥发布的 `/go_goal_pose`；临时 `/current_pose` 已到达桥和控制台，验证跨容器 ROS 数据链但未驱动机器人。
 - `goGoalNavigation eth0` 曾只完成 ROS/Unitree 初始化并保持 8 秒，未发送目标或启动重定位；真实运动链尚未验证。
 - 项目已从 NX `/home/unitree/gt` 原地迁移到 `/home/unitree/RobotABrainOnline`，旧路径已移除。
@@ -129,10 +140,7 @@ docker run --rm unitree_slam_example_new:humble check
 ## Git 与同步状态
 
 - 根目录是 `main` 分支 Git 仓库，`voice/` 由根仓库统一管理，不要在子目录再次执行 `git init`。
-- 2026-07-28 编写项目指南时，本机连接 NX `172.16.2.156:22` 超时，无法核对或同步 NX；服务器当前 HEAD 和工作区状态未确认。
-- 2026-07-17 合并交接报告前，本机与 NX 已验证处于相同基线提交 `9eb2a5a342545e3de3d7b83cb4b3659f7977f491`，两端工作区均干净。
-- 本报告本身会产生后续提交，因此当前部署提交应以两端 `git rev-parse HEAD` 的实际结果为准；每次修改后必须再次确认本机与 NX HEAD 相同且工作区干净。
-- 修改代码或文档后必须更新本报告、创建中文 Git 提交，并把 NX 同步到同一提交。
+- 2026-07-30 已合并本机 GitHub `main` 的项目指南历史与 NX 后续功能历史；后续每轮修改仍须更新本报告、创建中文提交，并确认本机与 NX 的 `HEAD` 一致。
 
 ## 剩余阻塞与下一步
 

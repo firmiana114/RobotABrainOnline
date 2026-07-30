@@ -16,14 +16,83 @@ logger = logging.getLogger(__name__)
 
 COORDINATE_FIELDS = ("x", "y", "z", "ox", "oy", "oz", "ow")
 OPENING_SEQUENCE = (
-    ("handshake_greeting", "shake_hand"),
-    ("handshake_welcome", "shake_hand"),
-    ("group_welcome", "face_wave"),
-    ("follow_intro", ""),
+    (("handshake_greeting", "handshake_welcome"), "shake_hand"),
+    (("group_welcome",), "face_wave"),
+    (("follow_intro",), ""),
 )
 BACKUP_LIMIT = 20
 MAX_POST_WAIT_SECONDS = 3600
-POST_WAIT_DIRECTIVE = re.compile(r'^\s*\{\s*"post_wait_seconds"\s*:\s*([^}]+)\s*\}\s*$')
+EDITABLE_SEGMENT_DIRECTIVES = (
+    "post_wait_seconds",
+    "speak_during_navigation",
+    "background_command",
+)
+ALLOWED_BACKGROUND_COMMANDS = {"coffee_delivery_run"}
+REMOVED_POINT8_VIDEO_PHRASE = "请各位领导一同观看宣传片"
+
+
+def _strip_removed_point8_video_wait(data: dict) -> dict:
+    for step in data.get("steps", []):
+        if not isinstance(step, dict):
+            continue
+        for segment in step.get("segments", []):
+            if not isinstance(segment, dict):
+                continue
+            text = str(segment.get("text") or "")
+            if REMOVED_POINT8_VIDEO_PHRASE not in text:
+                continue
+            text = text.replace(f"{REMOVED_POINT8_VIDEO_PHRASE}。", "")
+            text = text.replace(f"{REMOVED_POINT8_VIDEO_PHRASE}.", "")
+            text = text.replace(REMOVED_POINT8_VIDEO_PHRASE, "")
+            segment["text"] = text.strip()
+            if segment.get("post_wait_seconds") == 277:
+                segment.pop("post_wait_seconds", None)
+    return data
+
+
+def _ensure_point13_goodbye_actions(data: dict) -> dict:
+    for step in data.get("steps", []):
+        if not isinstance(step, dict):
+            continue
+        if step.get("entity_key") != "point_13" and step.get("scene") != "点位13告别":
+            continue
+        source_segments = step.get("segments", [])
+        if not isinstance(source_segments, list):
+            return data
+        text_segments = []
+        for segment in source_segments:
+            if not isinstance(segment, dict):
+                continue
+            text = str(segment.get("text") or "").strip()
+            if text:
+                clean_segment = dict(segment)
+                clean_segment.pop("action", None)
+                clean_segment.pop("action_name", None)
+                clean_segment.pop("speak_with_action", None)
+                clean_segment.pop("release_after_seconds", None)
+                text_segments.append(clean_segment)
+        if not text_segments:
+            return data
+        farewell_index = None
+        for index, segment in enumerate(text_segments):
+            if "各位再会" in str(segment.get("text") or ""):
+                farewell_index = index
+                break
+        if farewell_index is None:
+            return data
+        lead_index = max(0, farewell_index - 1)
+        text_segments[lead_index]["action"] = "right_hand_up"
+        text_segments[lead_index]["release_after_seconds"] = 0.5
+        text_segments[farewell_index]["action"] = "face_wave"
+        text_segments[farewell_index]["speak_with_action"] = True
+        text_segments.insert(farewell_index + 1, {
+            "action": "release_arm",
+            "text": "",
+            "speak_with_action": True,
+        })
+        step["segments"] = text_segments
+        return data
+    return data
 
 
 class DialogueError(RuntimeError):
@@ -39,6 +108,64 @@ def _normalize_post_wait_seconds(value: object, label: str) -> int | float:
     return int(seconds) if seconds.is_integer() else seconds
 
 
+def _normalize_speak_during_navigation(value: object, label: str) -> bool:
+    if not isinstance(value, bool):
+        raise DialogueError(f"{label} speak_during_navigation 必须是 true 或 false")
+    return value
+
+
+def _normalize_background_command(value: object, label: str) -> str:
+    if not isinstance(value, str) or value not in ALLOWED_BACKGROUND_COMMANDS:
+        allowed = "、".join(sorted(ALLOWED_BACKGROUND_COMMANDS))
+        raise DialogueError(f"{label} background_command 仅支持：{allowed}")
+    return value
+
+
+def _normalize_directive(key: str, value: object, label: str) -> object:
+    if key == "post_wait_seconds":
+        return _normalize_post_wait_seconds(value, label)
+    if key == "speak_during_navigation":
+        return _normalize_speak_during_navigation(value, label)
+    if key == "background_command":
+        return _normalize_background_command(value, label)
+    raise DialogueError(f"{label} 不支持功能段 {key}")
+
+
+def _parse_function_directive(line: str, line_number: int) -> tuple[str, object] | None:
+    if not any(f'"{key}"' in line for key in EDITABLE_SEGMENT_DIRECTIVES):
+        return None
+    try:
+        value = json.loads(line)
+    except json.JSONDecodeError as exc:
+        raise DialogueError(f"第 {line_number} 行功能段不是有效 JSON 对象") from exc
+    if not isinstance(value, dict) or len(value) != 1:
+        raise DialogueError(f"第 {line_number} 行功能段必须只包含一个功能名和参数")
+    key, parameter = next(iter(value.items()))
+    if key not in EDITABLE_SEGMENT_DIRECTIVES:
+        raise DialogueError(f"第 {line_number} 行不支持功能段 {key}")
+    return key, _normalize_directive(key, parameter, f"第 {line_number} 行")
+
+
+def _step_segments_with_navigation(step: dict) -> list[dict]:
+    source = step.get("segments", [])
+    segments = [dict(segment) for segment in source if isinstance(segment, dict)]
+    if "speak_during_navigation" not in step:
+        return segments
+    enabled = _normalize_speak_during_navigation(
+        step["speak_during_navigation"], "步骤"
+    )
+    if not enabled:
+        return segments
+    count = step.get("speak_during_navigation_segments", len(segments))
+    if isinstance(count, bool) or not isinstance(count, int) or count < 0 or count > len(segments):
+        raise DialogueError(
+            f"步骤 speak_during_navigation_segments 必须是 0 到 {len(segments)} 的整数"
+        )
+    for segment in segments[:count]:
+        segment.setdefault("speak_during_navigation", True)
+    return segments
+
+
 def _segments_to_script(segments: list) -> str:
     parts = []
     for segment in segments:
@@ -48,9 +175,11 @@ def _segments_to_script(segments: list) -> str:
         if not text:
             continue
         lines = [text]
-        if "post_wait_seconds" in segment:
-            seconds = _normalize_post_wait_seconds(segment["post_wait_seconds"], "台词段")
-            lines.append(json.dumps({"post_wait_seconds": seconds}, ensure_ascii=False, separators=(",", ":")))
+        for key in EDITABLE_SEGMENT_DIRECTIVES:
+            if key not in segment:
+                continue
+            value = _normalize_directive(key, segment[key], "台词段")
+            lines.append(json.dumps({key: value}, ensure_ascii=False, separators=(",", ":")))
         parts.append("\n".join(lines))
     return "\n\n".join(parts)
 
@@ -69,22 +198,19 @@ def _parse_script_segments(script: object) -> list[dict]:
             segments.append({"text": content})
 
     for line_number, line in enumerate(text.splitlines(), start=1):
-        directive = POST_WAIT_DIRECTIVE.fullmatch(line)
+        directive = _parse_function_directive(line, line_number)
         if directive:
             flush_text()
             if not segments:
-                raise DialogueError(f"第 {line_number} 行等待指令前必须先填写一段台词")
-            if "post_wait_seconds" in segments[-1]:
-                raise DialogueError(f"第 {line_number} 行重复设置了等待时间")
-            try:
-                value = json.loads(directive.group(1))
-            except json.JSONDecodeError as exc:
-                raise DialogueError(f"第 {line_number} 行 post_wait_seconds 不是有效数字") from exc
-            segments[-1]["post_wait_seconds"] = _normalize_post_wait_seconds(value, f"第 {line_number} 行")
+                raise DialogueError(f"第 {line_number} 行功能段前必须先填写一段台词")
+            key, value = directive
+            if key in segments[-1]:
+                raise DialogueError(f"第 {line_number} 行重复设置了 {key}")
+            segments[-1][key] = value
             continue
-        if "post_wait_seconds" in line:
+        if any(key in line for key in EDITABLE_SEGMENT_DIRECTIVES):
             raise DialogueError(
-                f'第 {line_number} 行等待指令格式错误，应为 {{"post_wait_seconds":数字}}'
+                f"第 {line_number} 行功能段格式错误，应单独一行填写 JSON 对象"
             )
         if not line.strip():
             flush_text()
@@ -192,12 +318,29 @@ def validate_dialogue(data: object, path: Path | None = None) -> dict:
         segments = step.get("segments", [])
         if not isinstance(segments, list):
             raise DialogueError(f"steps[{index}].segments 必须是数组")
+        if "speak_during_navigation" in step:
+            step["speak_during_navigation"] = _normalize_speak_during_navigation(
+                step["speak_during_navigation"], f"steps[{index}]"
+            )
+            count = step.get("speak_during_navigation_segments", len(segments))
+            if isinstance(count, bool) or not isinstance(count, int) or count < 0 or count > len(segments):
+                raise DialogueError(
+                    f"steps[{index}].speak_during_navigation_segments 必须是 0 到 {len(segments)} 的整数"
+                )
         for segment_index, segment in enumerate(segments):
             if not isinstance(segment, dict) or not isinstance(segment.get("text", ""), str):
                 raise DialogueError(f"steps[{index}].segments[{segment_index}] 必须包含字符串 text")
             if "post_wait_seconds" in segment:
                 segment["post_wait_seconds"] = _normalize_post_wait_seconds(
                     segment["post_wait_seconds"], f"steps[{index}].segments[{segment_index}]"
+                )
+            if "speak_during_navigation" in segment:
+                segment["speak_during_navigation"] = _normalize_speak_during_navigation(
+                    segment["speak_during_navigation"], f"steps[{index}].segments[{segment_index}]"
+                )
+            if "background_command" in segment:
+                segment["background_command"] = _normalize_background_command(
+                    segment["background_command"], f"steps[{index}].segments[{segment_index}]"
                 )
     return data
 
@@ -230,8 +373,12 @@ def build_route(data: dict) -> list[dict]:
     points = data.get("points", {})
     route: list[dict] = []
     opening_segments = []
-    for key, action in OPENING_SEQUENCE:
-        text = _substitute(opening.get(key, ""), variables).strip()
+    for keys, action in OPENING_SEQUENCE:
+        texts = [
+            _substitute(opening.get(key, ""), variables).strip()
+            for key in keys
+        ]
+        text = "".join(item for item in texts if item)
         if not text:
             continue
         segment = {"text": text}
@@ -239,6 +386,15 @@ def build_route(data: dict) -> list[dict]:
             segment.update({"action": action, "speak_with_action": True})
         opening_segments.append(segment)
     if opening_segments:
+        logger.info(
+            "开场路线已生成：segment_count=%s actions=%s",
+            len(opening_segments),
+            ",".join(
+                str(segment["action"])
+                for segment in opening_segments
+                if segment.get("action")
+            ),
+        )
         route.append({"name": "opening", "scene": "开场", "skip_navigation": True, "segments": opening_segments})
 
     for step in data.get("steps", []):
@@ -250,9 +406,10 @@ def build_route(data: dict) -> list[dict]:
         if not locations:
             continue
         segments = []
-        for original in step.get("segments", []):
+        for original in _step_segments_with_navigation(step):
             text = _substitute(original.get("text", ""), variables).strip()
-            if not text:
+            action = original.get("action") or original.get("action_name")
+            if not text and not action:
                 continue
             segment = dict(original)
             segment["text"] = text
@@ -322,7 +479,7 @@ class DialogueStore:
 
     def sync_runtime_files(self, backup: bool = False) -> dict:
         with self._lock:
-            data = self.load()
+            data = _ensure_point13_goodbye_actions(self.load())
             route_content = _formatted_json(build_route(data))
             qa_content = build_qa_context(data)
             if backup:
@@ -340,6 +497,8 @@ class DialogueStore:
             return {"route_nodes": len(json.loads(route_content)), "route_file": str(self.route_file)}
 
     def _save_data(self, data: dict, message: str) -> dict:
+        data = _strip_removed_point8_video_wait(data)
+        data = _ensure_point13_goodbye_actions(data)
         data = validate_dialogue(data, self.dialogue_file)
         route = build_route(data)
         qa_context = build_qa_context(data)
@@ -435,7 +594,7 @@ class DialogueStore:
                 "point_name": str(step.get("scene") or point_key or f"步骤{index + 1}"),
                 "point_key": point_key,
                 "coordinate": coordinate,
-                "script": _segments_to_script(step.get("segments", [])),
+                "script": _segments_to_script(_step_segments_with_navigation(step)),
             })
         return {
             "ok": True,
@@ -453,9 +612,10 @@ class DialogueStore:
             for item, update in zip(original, parsed):
                 segment = dict(item)
                 segment["text"] = update["text"]
-                segment.pop("post_wait_seconds", None)
-                if "post_wait_seconds" in update:
-                    segment["post_wait_seconds"] = update["post_wait_seconds"]
+                for key in EDITABLE_SEGMENT_DIRECTIVES:
+                    segment.pop(key, None)
+                    if key in update:
+                        segment[key] = update[key]
                 result.append(segment)
             return result
         return parsed
@@ -503,12 +663,14 @@ class DialogueStore:
             point.update({"name": point_name, "summary": str(point.get("summary") or point_name), "location": [coordinate]})
             point.setdefault("description", "网页控制台编辑点位。")
             points[point_key] = point
-            original_segments = original.get("segments", []) if isinstance(original.get("segments", []), list) else []
+            editor_segments = _step_segments_with_navigation(original)
             original.update({
                 "scene": point_name,
                 "entity_key": point_key,
-                "segments": self._segments_from_script(row.get("script"), original_segments),
+                "segments": self._segments_from_script(row.get("script"), editor_segments),
             })
+            original.pop("speak_during_navigation", None)
+            original.pop("speak_during_navigation_segments", None)
             new_steps.append(original)
         if opening is not None:
             data["opening"] = opening

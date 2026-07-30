@@ -189,9 +189,9 @@ flowchart LR
 | `voice/nav_route_then_speak.py` | 路线执行、HTTP 导航、STT、问答和播报编排 |
 | `voice/tour_guide_xiaozhi_interrupt_resume.py` | Kokoro、Qwen、基础 STT/TTS 和音频实现 |
 | `voice/arm_action_bridge.py` | Humble 容器中的 HTTP/ROS 桥 |
-| `voice/conf/dialogue_0.json` | 唯一应人工编辑的正式导览源配置 |
-| `voice/conf/dialogue_0_route.json` | 从源配置生成的运行路线 |
-| `voice/guide_qa_context.txt` | 从源配置生成的 Qwen 导览知识上下文 |
+| `voice/conf/dialogue_*.json` | 可在控制台切换、编辑和激活的导览源配置 |
+| `voice/conf/*_route.json` | 从所选源配置生成的运行路线，不纳入 Git |
+| `voice/conf/*_qa_context.txt`、`voice/guide_qa_context.txt` | 从所选源配置生成的 Qwen 导览知识上下文，不纳入 Git |
 | `voice/guide_cache/` | 已生成的路线 WAV；新运行时文件默认忽略 |
 | `voice/runtime/` | 状态、私密配置和运行文件，不纳入 Git |
 | `voice/deploy/systemd/` | 五个 systemd unit 模板 |
@@ -326,9 +326,9 @@ FastAPI lifespan 启动时：
 
 ## 8. 导览配置与派生数据
 
-### 8.1 单一事实来源
+### 8.1 选定台词文件是事实来源
 
-`voice/conf/dialogue_0.json` 是正式导览的单一事实来源。不要把 `dialogue_0_route.json` 或 `guide_qa_context.txt` 当作主要编辑入口，因为它们会在以下场景被覆盖：
+控制台会列出 `voice/conf/` 下除 `*_route.json` 外的台词 JSON；当前选择记录在 `voice/runtime/active_dialogue.json`。不要把任何 `*_route.json` 或 `*_qa_context.txt` 当作编辑入口，因为它们会在以下场景被覆盖：
 
 - 控制台启动。
 - 保存台词或点位。
@@ -415,13 +415,13 @@ FastAPI lifespan 启动时：
 6. 每个节点使用 `location[0]` 作为目标。
 7. 空台词节点仍可作为纯导航过渡点。
 
-当前正式配置生成：
+当前 `dialogue_0.json` 生成：
 
 - 18 个路线节点。
 - 17 个需要导航的节点和 1 个跳过导航的开场节点。
-- 34 段有效台词。
+- 33 段有效台词。
 - 5 次动作触发。
-- 点位 8 有一次 277 秒播报后等待。
+- 点位 8 的宣传片台词及 277 秒等待已移除。
 - 地图名为 `test7.pcd`，默认解析为 `/home/unitree/test7.pcd`。
 
 ### 8.5 地图路径的真实含义
@@ -744,11 +744,12 @@ Key 来源：
 
 - 默认模型 `qwen-plus`。
 - 最多播报 3 句话。
-- 把 `guide_qa_context.txt` 作为最高优先级导览资料。
+- 仅选择与当前问题相关的导览知识段，位置问题直接使用园区位置。
 - 保留有限对话历史。
-- 可通过 `ENABLE_SEARCH=1` 强制联网搜索。
+- `ENABLE_SEARCH=1` 时也只为天气、新闻、日期等实时问题强制联网搜索。
 - 按完整句子流式拆分。
 - TTS 合成和音频播放分别使用后台队列，以减少首句等待。
+- 控制台展示最近的问答和 STT/推理/TTS 耗时；运行时记录最多保留 200 条，单条文本最多 500 字。
 
 ### 14.3 Kokoro TTS
 
@@ -941,6 +942,7 @@ docker run --rm unitree_slam_example_new:humble check
 | `VOICE_ROUTE_FILE` | `conf/dialogue_0_route.json` | 派生路线 |
 | `VOICE_QA_CONTEXT_FILE` | `guide_qa_context.txt` | 派生问答上下文 |
 | `VOICE_RUNTIME_STATUS_FILE` | `runtime/tour_status.json` | 导览状态 |
+| `VOICE_INTERACTION_LOG_FILE` | `runtime/interactions.jsonl` | 有界问答与耗时展示数据 |
 | `VOICE_MAP_ROOT` | `/home/unitree` | 相对地图文件根目录 |
 | `VOICE_TOUR_CONTROL_URL` | `http://127.0.0.1:8766` | 任务控制接口 |
 | `VOICE_POSE_STALE_SECONDS` | `5` | 位姿过期阈值 |
@@ -956,7 +958,7 @@ docker run --rm unitree_slam_example_new:humble check
 | `OPENAI_API_KEY` | 可替代 DashScope Key | OpenAI 兼容客户端 Key |
 | `OPENAI_BASE_URL` | DashScope 兼容地址 | Qwen API 地址 |
 | `QWEN_MODEL` | `qwen-plus` | 问答模型 |
-| `ENABLE_SEARCH` | `1` | 是否强制搜索 |
+| `ENABLE_SEARCH` | `1` | 是否允许实时问题强制搜索 |
 | `KOKORO_REPO_ID` | `hexgrad/Kokoro-82M` | TTS 模型仓库 |
 | `KOKORO_VOICE` | `zm_yunxi` | 音色 |
 | `ALSA_INPUT_DEVICE` | `plughw:CARD=Rx,DEV=0` | 麦克风 |
@@ -986,6 +988,7 @@ docker run --rm unitree_slam_example_new:humble check
 | --- | --- | --- |
 | GET | `/` | 控制台页面 |
 | GET | `/api/status` | 服务、外部进程、位姿、任务和地图状态 |
+| GET | `/api/interactions` | 最近问答和 STT/推理/TTS 耗时 |
 | POST | `/api/navigation/start` | 重启导航 |
 | POST | `/api/arm/start` | 重启手臂控制 |
 | POST | `/api/tour/restart-service` | 重启并预热导览服务 |
@@ -1033,7 +1036,7 @@ docker run --rm unitree_slam_example_new:humble check
 | `[arm]` | 手臂请求结果 |
 | `[tts]` | TTS 分块和采样诊断 |
 
-监督进程不会把完整识别文本、用户问题或 Qwen 内容直接写入自己的日志，而是记录事件类型、长度、阶段和异常类型。新增日志时应延续这一原则。
+监督进程不会把完整识别文本、用户问题或 Qwen 内容写入 journald，而是记录事件类型、长度、阶段和异常类型。供控制台展示的问答写入被 `.gitignore` 排除的运行时 JSONL，并受到条数和文本长度限制。
 
 ### 21.3 常见故障定位
 
@@ -1128,10 +1131,11 @@ git diff --check
 
 ```bash
 PYTHONPATH=voice python -m voice_console.generate
-git diff -- voice/conf/dialogue_0_route.json voice/guide_qa_context.txt
+test -s voice/conf/dialogue_0_route.json
+test -s voice/guide_qa_context.txt
 ```
 
-如果只是验证，不希望改动工作区，应使用临时副本或在运行前后确认 diff；生成命令会写派生文件。
+生成命令会写派生文件，但这些文件已由 `.gitignore` 排除，不应加入提交。
 
 ### 22.4 容器检查
 
@@ -1162,7 +1166,7 @@ docker run --rm unitree_slam_example_new:humble check
 
 主要文件：
 
-- `voice/conf/dialogue_0.json`
+- `voice/conf/dialogue_*.json`
 - `voice/voice_console/dialogue.py`
 - `voice/tests/test_dialogue.py`
 - `voice/tests/test_post_wait_runner.py`
