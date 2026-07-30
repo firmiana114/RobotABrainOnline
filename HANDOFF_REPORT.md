@@ -118,6 +118,11 @@ docker run --rm unitree_slam_example_new:humble check
 - 后端校验文件名、真实路径和目录边界；非默认文件保存时生成同名 `_route.json` 与 `_qa_context.txt`。点击“启动导览”或“重启导览服务”会把当前选择生成到正式运行路线并原子记录到 `voice/runtime/active_dialogue.json`，监督进程重启后继续使用同一文件。
 - 新增 INFO/WARNING 日志记录文件列表刷新、选择、保存行数和拒绝原因，不记录台词正文；接口回归覆盖文件切换、独立保存、派生文件排除和路径穿越拒绝。
 
+## dialogue_1 扩展功能段
+
+- 台词段支持 `{"speak_during_navigation":true}`（边走边说，`false` 或省略为到达后播报）和 `{"background_command":"coffee_delivery_run"}`（异步调用 `voice/send_delivery_task.py run`）；旧步骤级边走边说字段仍兼容，前端加载后会显示为台词功能段。
+- 后台命令严格使用白名单且单次导览按 once key 去重；记录命令名、返回码、耗时和输出长度，不记录接口响应正文。模拟执行顺序、重复抑制、非法参数和序列化均有回归覆盖，未向真实咖啡车发送任务。
+
 ## 已验证事实
 
 - 控制台启动失败根因是迁移后的 `.venv/bin/activate` 仍硬编码旧目录 `/home/unitree/gt/voice/.venv`，使 systemd 最终调用缺少 `uvicorn` 的 `/usr/bin/python3`；控制台、导航和导览脚本已改为直接调用可迁移的 `${VENV_ROOT}/bin/python`，并记录实际解释器路径。

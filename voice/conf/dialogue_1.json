@@ -1,0 +1,213 @@
+{
+  "variables": {
+    "leader_calling": "各位领导"
+  },
+  "opening": {
+    "short_mode_leader_calling": "{leader_calling}",
+    "short_mode_intro": "欢迎您来到滨湖复星人形机器人产业园。我叫小智，可以带您参观展区，也可以回答您的问题。",
+    "short_mode_ready": "如果您想开始参观，可以直接告诉我。",
+    "handshake_greeting": "{leader_calling}您好，我叫小智。",
+    "handshake_welcome": "欢迎您来到滨湖复星人形机器人产业园。",
+    "group_welcome": "各位朋友，也欢迎你们！",
+    "follow_intro": "{leader_calling}，各位，请随我来，我简单的介绍一下园区。"
+  },
+  "steps": [
+    {
+      "scene": "1到2过渡",
+      "entity_key": "point_1_to_2_transition",
+      "segments": []
+    },
+    {
+      "scene": "跟随步行到点位2",
+      "entity_key": "point_2",
+      "segments": []
+    },
+    {
+      "scene": "点咖啡",
+      "entity_key": "point_2",
+      "skip_navigation_if_current": true,
+      "segments": [
+        {
+          "text": "对了，{leader_calling}、各位，我们给各位准备了咖啡还有其他饮料，我让我的小伙伴给送过来。"
+        },
+        {
+          "action": "right_hand_up",
+          "text": "我来给各位安排。",
+          "speak_with_action": true,
+          "background_command": "coffee_delivery_run",
+          "background_command_name": "呼叫AIR咖啡车",
+          "background_command_once_key": "coffee_delivery_run"
+        }
+      ]
+    },
+    {
+      "scene": "初步介绍",
+      "entity_key": "point_3",
+      "segments": [
+        {
+          "text": "我们产业园2025年12月开园后，我们紧扣人形机器人核心赛道，做了大量工作，除了提升园区的软件和硬件水平外，我们还不断加大产业项目招引，目前，签约共创实验室平台1个，签约机器人产研项目20余个，成果十分显著。",
+          "speak_during_navigation": true
+        }
+      ]
+    },
+    {
+      "scene": "拿取咖啡",
+      "entity_key": "point_3",
+      "skip_navigation_if_current": true,
+      "segments": [
+        {
+          "action": "right_hand_up",
+          "text": "{leader_calling}，咖啡和饮料来了，请您还有各位朋友自取。"
+        }
+      ]
+    },
+    {
+      "scene": "前往3到5过渡点",
+      "entity_key": "point_3_to_5_transition",
+      "segments": []
+    },
+    {
+      "scene": "前往点位5",
+      "entity_key": "point_5",
+      "segments": []
+    },
+    {
+      "scene": "告别并指引小巴方向",
+      "entity_key": "point_5",
+      "skip_navigation_if_current": true,
+      "segments": [
+        {
+          "action": "right_hand_up",
+          "text": "{leader_calling}、各位领导，下面请移步门外，乘坐无人驾驶小巴车深入了解我们园区。"
+        },
+        {
+          "action": "high_wave",
+          "text": "各位再会！",
+          "speak_with_action": true
+        }
+      ]
+    }
+  ],
+  "map_file": "test1.pcd",
+  "points": {
+    "point_1": {
+      "name": "点位1",
+      "summary": "点位1",
+      "description": "DOCX 剧本起始点位。",
+      "location": [
+        {
+          "x": 1.9105,
+          "y": -1.618,
+          "z": 0.0117,
+          "ox": -0.0029,
+          "oy": 0.0265,
+          "oz": -0.2046,
+          "ow": 0.9785,
+          "mode": 1
+        }
+      ]
+    },
+    "point_1_to_2_transition": {
+      "name": "1->2过渡点位",
+      "summary": "1->2过渡点位",
+      "description": "DOCX 剧本点位1前往点位2路径上的过渡点位；该点位只导航，不播报台词。",
+      "location": [
+        {
+          "x": 8.6465,
+          "y": -2.5763,
+          "z": -0.0722,
+          "ox": 0.0547,
+          "oy": 0.0907,
+          "oz": 0.5347,
+          "ow": 0.8384,
+          "mode": 1
+        }
+      ]
+    },
+    "point_2": {
+      "name": "点位2",
+      "summary": "点位2",
+      "description": "DOCX 剧本问咖啡点位；点咖啡台词只允许在该最终点位播报。",
+      "location": [
+        {
+          "x": 10.1203,
+          "y": 0.8162,
+          "z": -0.1335,
+          "ox": 0.0904,
+          "oy": 0.0373,
+          "oz": 0.9074,
+          "ow": 0.4087,
+          "mode": 1
+        }
+      ]
+    },
+    "point_3": {
+      "name": "点位3",
+      "summary": "点位3",
+      "description": "DOCX 剧本拿取咖啡点位。",
+      "location": [
+        {
+          "x": 11.109,
+          "y": 4.3229,
+          "z": -0.1892,
+          "ox": 0.0937,
+          "oy": 0.017,
+          "oz": 0.9717,
+          "ow": 0.2162,
+          "mode": 1
+        }
+      ]
+    },
+    "point_4": {
+      "name": "点位4",
+      "summary": "点位4",
+      "description": "DOCX 剧本点位3前往点位5路径上的中转点位。",
+      "location": [
+        {
+          "x": 13.941,
+          "y": -5.1633,
+          "z": 0.035,
+          "ox": 0.014,
+          "oy": 0.0335,
+          "oz": -0.9085,
+          "ow": -0.4163,
+          "mode": 1
+        }
+      ]
+    },
+    "point_3_to_5_transition": {
+      "name": "3->5过渡点位",
+      "summary": "3->5过渡点位",
+      "description": "DOCX 剧本点位3前往点位5路径上的过渡点位；该点位只导航，不播报台词。",
+      "location": [
+        {
+          "x": 5.5507,
+          "y": 14.4097,
+          "z": -0.1921,
+          "ox": 0.0779,
+          "oy": 0.0578,
+          "oz": 0.7806,
+          "ow": 0.6174,
+          "mode": 1
+        }
+      ]
+    },
+    "point_5": {
+      "name": "点位5",
+      "summary": "点位5",
+      "description": "DOCX 剧本告别并指引小巴方向点位；告别台词只允许在该最终点位播报。",
+      "location": [
+        {
+          "x": 4.7039,
+          "y": 20.4749,
+          "z": -0.225,
+          "ox": 0.0876,
+          "oy": -0.0269,
+          "oz": 0.9076,
+          "ow": -0.4096,
+          "mode": 1
+        }
+      ]
+    }
+  }
+}

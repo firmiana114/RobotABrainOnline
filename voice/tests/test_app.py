@@ -69,6 +69,8 @@ def test_page_structure_and_apis(config_and_store):
         assert "getElementById('startArmBtn').disabled=false" in html
         assert 'id="dialogueFileSelect"' in html
         assert "/api/dialogue/files" in html
+        assert '{"speak_during_navigation":true}' in html
+        assert '{"background_command":"coffee_delivery_run"}' in html
         assert "startTour(this)" in html
         assert 'id="activeDialogueFile"' in html
 

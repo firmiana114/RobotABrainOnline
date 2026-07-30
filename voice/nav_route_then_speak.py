@@ -38,6 +38,10 @@ clean_api_key = None
 clean_tts_text = None
 logger = logging.getLogger("voice_route")
 INTERRUPT_RESUME_NOTICE = "如果没有别的问题，我将继续导览。"
+BACKGROUND_COMMANDS = {
+    "coffee_delivery_run": ("send_delivery_task.py", "run"),
+}
+BACKGROUND_COMMAND_TIMEOUT_SECONDS = 30.0
 
 
 class TourCancelled(RuntimeError):
@@ -116,6 +120,21 @@ def load_speech_segments(item, base_dir):
             }
             if "post_wait_seconds" in seg:
                 loaded_segment["post_wait_seconds"] = seg["post_wait_seconds"]
+            if "speak_during_navigation" in seg:
+                if not isinstance(seg["speak_during_navigation"], bool):
+                    raise ValueError("speak_during_navigation must be a boolean")
+                loaded_segment["speak_during_navigation"] = seg["speak_during_navigation"]
+            if "background_command" in seg:
+                command = str(seg["background_command"])
+                if command not in BACKGROUND_COMMANDS:
+                    raise ValueError(f"unsupported background command: {command}")
+                loaded_segment["background_command"] = command
+                loaded_segment["background_command_name"] = str(
+                    seg.get("background_command_name") or command
+                )
+                loaded_segment["background_command_once_key"] = str(
+                    seg.get("background_command_once_key") or command
+                )
             result.append(loaded_segment)
         return result
 
@@ -927,8 +946,98 @@ def build_parser():
     return parser
 
 
+def start_background_command(command_name, voice_project, cancel_event=None):
+    command_spec = BACKGROUND_COMMANDS.get(command_name)
+    if command_spec is None:
+        raise ValueError(f"unsupported background command: {command_name}")
+    script_name, *arguments = command_spec
+    script_path = (Path(voice_project).resolve() / script_name).resolve()
+    project_path = Path(voice_project).resolve()
+    if script_path.parent != project_path or not script_path.is_file():
+        raise FileNotFoundError(f"background command script not found: {script_path}")
+
+    def worker():
+        if cancel_event is not None and cancel_event.is_set():
+            logger.info("后台功能命令已取消：command=%s reason=tour_cancelled", command_name)
+            return
+        started_at = time.perf_counter()
+        logger.info(
+            "后台功能命令开始：command=%s script=%s",
+            command_name,
+            script_path.name,
+        )
+        try:
+            result = subprocess.run(
+                [sys.executable, str(script_path), *arguments],
+                cwd=str(project_path),
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=BACKGROUND_COMMAND_TIMEOUT_SECONDS,
+            )
+            elapsed_seconds = time.perf_counter() - started_at
+            log = logger.info if result.returncode == 0 else logger.error
+            log(
+                "后台功能命令结束：command=%s return_code=%s elapsed_seconds=%.3f "
+                "stdout_length=%s stderr_length=%s",
+                command_name,
+                result.returncode,
+                elapsed_seconds,
+                len(result.stdout or ""),
+                len(result.stderr or ""),
+            )
+        except subprocess.TimeoutExpired:
+            logger.error(
+                "后台功能命令超时：command=%s timeout_seconds=%.1f",
+                command_name,
+                BACKGROUND_COMMAND_TIMEOUT_SECONDS,
+            )
+        except Exception:
+            logger.exception("后台功能命令异常：command=%s", command_name)
+
+    thread = threading.Thread(
+        target=worker,
+        name=f"route-command-{command_name}",
+        daemon=True,
+    )
+    thread.start()
+    return thread
+
+
+def trigger_segment_background_command(
+    segment,
+    voice_project,
+    executed_once_keys,
+    cancel_event=None,
+):
+    command_name = str(segment.get("background_command") or "").strip()
+    if not command_name:
+        return None
+    once_key = str(segment.get("background_command_once_key") or command_name)
+    if once_key in executed_once_keys:
+        logger.info(
+            "后台功能命令跳过重复执行：command=%s once_key=%s",
+            command_name,
+            once_key,
+        )
+        return None
+    executed_once_keys.add(once_key)
+    logger.info(
+        "触发台词后台功能：command=%s display_name=%s once_key=%s",
+        command_name,
+        str(segment.get("background_command_name") or command_name),
+        once_key,
+    )
+    return start_background_command(
+        command_name,
+        voice_project,
+        cancel_event=cancel_event,
+    )
+
+
 def execute_route_once(args, voice_app, node, stt_enabled, cancel_event):
     base_dir = Path(args.route_file).resolve().parent
+    voice_project = Path(getattr(args, "voice_project", base_dir.parent))
     route = load_route(args.route_file)
     action_aliases = parse_action_aliases(args.action_alias)
     args.qa_context_text = load_qa_context(args.qa_context_file, args.qa_context_max_chars)
@@ -942,6 +1051,7 @@ def execute_route_once(args, voice_app, node, stt_enabled, cancel_event):
         f"elapsed_seconds={time.perf_counter() - stage_started:.3f}",
         flush=True,
     )
+    executed_background_commands = set()
 
     for index, item in enumerate(route, start=1):
         if cancel_event.is_set():
@@ -952,27 +1062,68 @@ def execute_route_once(args, voice_app, node, stt_enabled, cancel_event):
         print(f"\n[route] {index}/{len(route)} -> {name}", flush=True)
         if item.get("skip_navigation"):
             print(f"[route] {name} skips navigation", flush=True)
+            navigation_segments = []
+            arrival_segments = list(enumerate(segments))
         else:
             goal = normalize_goal(item)
             node.publish_goal(goal)
-            status = node.wait_arrived(args.goal_timeout, cancel_event=cancel_event)
-            print(f"[route] arrived at {name}: {status}", flush=True)
-
-        if segments:
-            for seg_index, segment in enumerate(segments):
+            navigation_segments = [
+                (seg_index, segment)
+                for seg_index, segment in enumerate(segments)
+                if segment.get("speak_during_navigation")
+            ]
+            arrival_segments = [
+                (seg_index, segment)
+                for seg_index, segment in enumerate(segments)
+                if not segment.get("speak_during_navigation")
+            ]
+            if navigation_segments:
+                logger.info(
+                    "开始边走边说：route=%s segment_count=%s",
+                    name,
+                    len(navigation_segments),
+                )
+            for seg_index, segment in navigation_segments:
                 if cancel_event.is_set():
-                    raise TourCancelled("tour task stopped before speech segment")
-                speak_index = (index - 1) * 100 + seg_index
+                    raise TourCancelled("tour task stopped before navigation speech segment")
+                trigger_segment_background_command(
+                    segment,
+                    voice_project,
+                    executed_background_commands,
+                    cancel_event=cancel_event,
+                )
                 speak_segment(
                     voice_app,
                     node,
                     segment,
-                    speak_index,
+                    (index - 1) * 100 + seg_index,
                     stt_enabled,
                     action_aliases,
                     cancel_event=cancel_event,
                 )
-        else:
+            status = node.wait_arrived(args.goal_timeout, cancel_event=cancel_event)
+            print(f"[route] arrived at {name}: {status}", flush=True)
+
+        if arrival_segments:
+            for seg_index, segment in arrival_segments:
+                if cancel_event.is_set():
+                    raise TourCancelled("tour task stopped before speech segment")
+                trigger_segment_background_command(
+                    segment,
+                    voice_project,
+                    executed_background_commands,
+                    cancel_event=cancel_event,
+                )
+                speak_segment(
+                    voice_app,
+                    node,
+                    segment,
+                    (index - 1) * 100 + seg_index,
+                    stt_enabled,
+                    action_aliases,
+                    cancel_event=cancel_event,
+                )
+        elif not navigation_segments:
             print(f"[route] {name} has no speech, skip speaking", flush=True)
 
     print("[route] finished", flush=True)
