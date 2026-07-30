@@ -140,6 +140,145 @@ def test_navigation_loader_preserves_extra_function_directives(tmp_path):
     assert segments[1]["background_command_once_key"] == "coffee_delivery_run"
 
 
+def test_speak_segment_releases_gesture_after_speech(monkeypatch):
+    navigation = pytest.importorskip("nav_route_then_speak")
+    events = []
+
+    class FakeNode:
+        def send_arm_action(self, action_name):
+            events.append(f"action:{action_name}")
+            return True
+
+    app = SimpleNamespace(route_voice_lock=threading.Lock())
+    monkeypatch.setattr(
+        navigation,
+        "speak_playback_only",
+        lambda _app, text, _index: events.append(f"speak:{text}"),
+    )
+    monkeypatch.setattr(
+        navigation.time,
+        "sleep",
+        lambda seconds: events.append(f"sleep:{seconds}"),
+    )
+
+    navigation.speak_segment(
+        app,
+        FakeNode(),
+        {
+            "text": "我来给各位安排。",
+            "action": "right_hand_up",
+            "speak_with_action": True,
+        },
+        0,
+        False,
+        {},
+    )
+
+    assert events == [
+        "action:right_hand_up",
+        "sleep:0.15",
+        "speak:我来给各位安排。",
+        "action:release_arm",
+    ]
+
+
+def test_speak_segment_release_delay_starts_after_speech(monkeypatch):
+    navigation = pytest.importorskip("nav_route_then_speak")
+    events = []
+
+    class FakeNode:
+        def send_arm_action(self, action_name):
+            events.append(f"action:{action_name}")
+            return True
+
+    app = SimpleNamespace(route_voice_lock=threading.Lock())
+    monkeypatch.setattr(
+        navigation,
+        "speak_playback_only",
+        lambda _app, text, _index: events.append(f"speak:{text}"),
+    )
+    monkeypatch.setattr(
+        navigation.time,
+        "sleep",
+        lambda seconds: events.append(f"sleep:{seconds}"),
+    )
+
+    navigation.speak_segment(
+        app,
+        FakeNode(),
+        {
+            "text": "各位再会！",
+            "action": "face_wave",
+            "release_after_seconds": 0.5,
+        },
+        0,
+        False,
+        {},
+    )
+
+    assert events == [
+        "action:face_wave",
+        "sleep:0.15",
+        "speak:各位再会！",
+        "sleep:0.5",
+        "action:release_arm",
+    ]
+
+
+def test_speak_segment_releases_gesture_when_speech_fails(monkeypatch):
+    navigation = pytest.importorskip("nav_route_then_speak")
+    actions = []
+
+    class FakeNode:
+        def send_arm_action(self, action_name):
+            actions.append(action_name)
+            return True
+
+    app = SimpleNamespace(route_voice_lock=threading.Lock())
+    monkeypatch.setattr(navigation.time, "sleep", lambda _seconds: None)
+
+    def fail_speech(_app, _text, _index):
+        raise RuntimeError("playback failed")
+
+    monkeypatch.setattr(navigation, "speak_playback_only", fail_speech)
+
+    with pytest.raises(RuntimeError, match="playback failed"):
+        navigation.speak_segment(
+            app,
+            FakeNode(),
+            {"text": "测试台词。", "action": "right_hand_up"},
+            0,
+            False,
+            {},
+        )
+
+    assert actions == ["right_hand_up", "release_arm"]
+
+
+def test_speak_segment_does_not_release_release_arm_again(monkeypatch):
+    navigation = pytest.importorskip("nav_route_then_speak")
+    actions = []
+
+    class FakeNode:
+        def send_arm_action(self, action_name):
+            actions.append(action_name)
+            return True
+
+    app = SimpleNamespace(route_voice_lock=threading.Lock())
+    monkeypatch.setattr(navigation.time, "sleep", lambda _seconds: None)
+
+    navigation.speak_segment(
+        app,
+        FakeNode(),
+        {"text": "", "action": "release_arm"},
+        0,
+        False,
+        {},
+    )
+
+    assert actions == ["release_arm"]
+
+
 def test_route_speaks_during_navigation_and_runs_background_command_once(
     monkeypatch,
     tmp_path,

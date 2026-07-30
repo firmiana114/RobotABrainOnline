@@ -111,15 +111,18 @@ def load_speech_segments(item, base_dir):
                 if not speech_path.is_absolute():
                     speech_path = base_dir / speech_path
                 text = speech_path.read_text(encoding="utf-8-sig").strip()
-            if not text:
+            action = seg.get("action") or seg.get("action_name")
+            if not text and not action:
                 continue
             loaded_segment = {
                 "text": text,
-                "action": seg.get("action") or seg.get("action_name"),
+                "action": action,
                 "speak_with_action": bool(seg.get("speak_with_action", True)),
             }
             if "post_wait_seconds" in seg:
                 loaded_segment["post_wait_seconds"] = seg["post_wait_seconds"]
+            if "release_after_seconds" in seg:
+                loaded_segment["release_after_seconds"] = seg["release_after_seconds"]
             if "speak_during_navigation" in seg:
                 if not isinstance(seg["speak_during_navigation"], bool):
                     raise ValueError("speak_during_navigation must be a boolean")
@@ -778,26 +781,68 @@ def background_question_loop(app, stop_event):
 
 
 def speak_segment(app, node, segment, index, stt_enabled, action_aliases, cancel_event=None):
-    text = segment["text"]
+    text = str(segment.get("text") or "").strip()
     action = resolve_action_name(segment.get("action"), action_aliases)
     cancel_event = cancel_event or getattr(app, "route_cancel_event", None)
+    action_started = False
+    release_delay = 0.0
 
     if cancel_event is not None and cancel_event.is_set():
         raise TourCancelled("tour task stopped before segment")
 
     with app.route_voice_lock:
-        if action and segment.get("speak_with_action", True):
-            print(f"[route] segment action={action} text={text[:30]}", flush=True)
-            node.send_arm_action(action)
-            if cancel_event is not None and cancel_event.wait(0.15):
-                raise TourCancelled("tour task stopped after arm action")
-            if cancel_event is None:
-                time.sleep(0.15)
+        try:
+            if action and segment.get("speak_with_action", True):
+                print(f"[route] segment action={action} text={text[:30]}", flush=True)
+                action_started = action != "release_arm"
+                release_after = segment.get("release_after_seconds", 0.0)
+                try:
+                    release_delay = max(0.0, float(release_after))
+                except (TypeError, ValueError):
+                    logger.warning(
+                        "无效的手势释放延迟，按 0 秒处理：source_action=%s value_type=%s",
+                        action,
+                        type(release_after).__name__,
+                    )
+                    release_delay = 0.0
+                node.send_arm_action(action)
+                if cancel_event is not None and cancel_event.wait(0.15):
+                    raise TourCancelled("tour task stopped after arm action")
+                if cancel_event is None:
+                    time.sleep(0.15)
 
-        if stt_enabled:
-            speak_with_interrupt_resume(app, text, index, cancel_event=cancel_event)
-        else:
-            speak_playback_only(app, text, index)
+            if not text:
+                logger.info("动作段执行完成：action=%s", action or "")
+                return
+
+            if stt_enabled:
+                speak_with_interrupt_resume(app, text, index, cancel_event=cancel_event)
+            else:
+                speak_playback_only(app, text, index)
+        finally:
+            if action_started:
+                cancelled_before_release = bool(
+                    cancel_event is not None and cancel_event.is_set()
+                )
+                if release_delay > 0 and not cancelled_before_release:
+                    if cancel_event is not None:
+                        cancelled_before_release = cancel_event.wait(release_delay)
+                    else:
+                        time.sleep(release_delay)
+                logger.info(
+                    "台词手势自动释放：source_action=%s delay_seconds=%.3f "
+                    "cancelled_before_release=%s text_length=%s",
+                    action,
+                    release_delay,
+                    cancelled_before_release,
+                    len(text),
+                )
+                released = node.send_arm_action("release_arm")
+                if not released:
+                    logger.warning(
+                        "台词手势释放请求未被桥接服务接受：source_action=%s",
+                        action,
+                    )
 
     if cancel_event is not None and cancel_event.is_set():
         raise TourCancelled("tour task stopped during segment")
@@ -1136,10 +1181,13 @@ def precache_route_audio(args, voice_app):
     generated = 0
     for index, item in enumerate(route, start=1):
         for seg_index, segment in enumerate(load_speech_segments(item, base_dir)):
+            text = str(segment.get("text") or "").strip()
+            if not text:
+                continue
             speak_index = (index - 1) * 100 + seg_index
-            wav_path = voice_app.guide_wav_path(speak_index, segment["text"])
+            wav_path = voice_app.guide_wav_path(speak_index, text)
             cached = wav_path.exists() and wav_path.stat().st_size > 1000
-            voice_app.ensure_guide_wav(speak_index, segment["text"])
+            voice_app.ensure_guide_wav(speak_index, text)
             total += 1
             if not cached:
                 generated += 1
