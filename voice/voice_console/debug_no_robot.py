@@ -57,13 +57,20 @@ def build_parser():
     parser.add_argument("--travel-seconds", type=float, default=1.0)
     parser.add_argument("--post-wait-limit", type=float, default=2.0, help="台词后等待上限（秒）；-1 保留正式等待")
     parser.add_argument("--mic", default=os.getenv("DEBUG_MIC_DEVICE", "plughw:CARD=MINI,DEV=0"))
-    parser.add_argument("--aplay-device", help="明确输出设备，例如 plughw:CARD=XXX,DEV=0 或 pulse")
-    parser.add_argument("--speaker-name", default="REDMI Speaker 2-4550")
+    parser.add_argument("--aplay-device", default=os.getenv("APLAY_DEVICE") or "pulse", help="明确输出设备，例如 plughw:CARD=XXX,DEV=0 或 pulse")
+    parser.add_argument("--speaker-name", default="", help="兼容旧命令；不再用于选择输出")
     parser.add_argument("--check", action="store_true", help="检查配置和音频设备后退出；不启动导览")
     return parser
 
 
 def check_audio(mic, output):
+    if output == "pulse":
+        # Do not silently route a disconnected speaker to a dummy output.
+        selected = subprocess.check_output(["pactl", "get-default-sink"], text=True, timeout=5).strip()
+        sinks = subprocess.check_output(["pactl", "list", "short", "sinks"], text=True, timeout=5)
+        rows = [line.split() for line in sinks.splitlines()]
+        if not any(len(row) > 2 and row[1] == selected and "null-sink" not in row[2] for row in rows):
+            raise RuntimeError("系统未选择可用音频输出，请先连接音响并在系统中选择输出设备")
     # Short hardware open tests, with silence on output. No recorded audio is saved.
     subprocess.run(["arecord", "-q", "-D", mic, "-f", "S16_LE", "-r", "48000",
                     "-c", "2", "-d", "1", "-t", "raw", "/dev/null"], check=True, timeout=5)
@@ -83,9 +90,7 @@ def main():
     points = select_points(build_route(data), options.start_point, options.point_count)
     if not (os.getenv("DASHSCOPE_API_KEY") or os.getenv("OPENAI_API_KEY")):
         raise RuntimeError("请先在 voice/runtime/voice.env 配置 API Key")
-    output = options.aplay_device or route.resolve_aplay_device(options)
-    if not output:
-        raise RuntimeError("未找到音响声卡。蓝牙音响需先连接并选为系统输出，再传 --aplay-device pulse；不会自动使用其他输出。")
+    output = options.aplay_device or "pulse"
     check_audio(options.mic, output)
     print(f"[debug] audio_open_ok mic={options.mic} output={output} points={len(points)}", flush=True)
     print("[SIMULATION] robot disabled; live microphone and cloud STT/Qwen enabled", flush=True)

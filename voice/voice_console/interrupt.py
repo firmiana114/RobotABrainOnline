@@ -28,10 +28,8 @@ def play_audio_file(
     sleep: Callable[[float], None] = time.sleep,
 ) -> bool:
     wav_path = Path(wav_path)
-    selected_device = device or "default"
-    command = ["aplay", "-q"]
-    if device:
-        command.extend(["-D", device])
+    selected_device = device or "pulse"
+    command = ["aplay", "-q", "-D", selected_device]
     command.append(str(wav_path))
 
     try:
