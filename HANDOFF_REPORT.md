@@ -11,13 +11,15 @@
 - 镜像 `unitree_slam_example_new:humble` 的离线 check 通过，SDK、自定义 Action、六个节点及动态库完整。桥 `/healthz` 返回 ok，`/nav_state` 的订阅者为 0，与机器人离线一致；控制台首页 HTTP 200。
 - 原有测试 66 passed；新增离线模式测试 1 passed，验证无 Key 时离线模式不创建云客户端，正式模式仍拒绝无 Key。
 - `voice/runtime/deployment.env` 当前 `ROS_INTERFACE=lo`，桥只使用回环接口。现场机器人候选有线口 `eno1` 当前无链路；未修改 IP、路由，未启动运动节点。
-- `voice/runtime/voice.env` 已创建（0600），Key 留空。云端 STT/Qwen 真实调用尚未验证；未检测到文档指定的 Rx 麦克风及 REDMI 扬声器，实际采集和外放待设备连接。
+- `voice/runtime/voice.env` 已由用户填入 Key（权限仍为 0600）。已实际验证 Qwen 问答（1.23 秒）及 paraformer-realtime-v2 识别（0.67 秒）：合成测试音频中的四个关键词均匹配。未输出 Key、识别全文或回答正文。
+- 完整无硬件验证通过：CUDA 合成测试提问 → 云端 STT → 项目 `stream_qwen_and_speak_by_sentence`（开启搜索）→ CUDA 回答合成，生成可读取、24000 Hz、数据有限的 2.5 秒 WAV，全程 16.16 秒（含模型初始化）。仅在独立验证进程中将播放函数替换为音频文件校验；没有录音、外放或机器人调用。结果位于 `voice/runtime/cloud_verification.json` 和 `voice/runtime/pipeline_verification.json`；探针脚本及测试音频也位于 runtime，不进入 Git。
+- 未检测到文档指定的 Rx 麦克风及 REDMI 扬声器，实际采集和外放待设备连接。导览常驻服务仍保持 inactive，未绕过真实导航订阅者就绪检查。
 - 公网修复：同网段本机 DHCP 确认路由器/DNS 为 192.168.101.254；为 Tsinghua-WX-5G 补齐 ipv4.gateway 与 ipv4.dns，reapply 保留原 IP。DashScope HTTPS 返回 401（无凭据连通测试），NTP 已同步。回滚可将该连接 gateway、dns 恢复为空并 reapply。
 - 用户明确授权配置 `pc` 免密 sudo：`/etc/sudoers.d/90-pc-nopasswd`；完整 sudoers 校验及 `sudo -n true` 通过。无需密码写入项目。
 
 现场接入顺序（以下尚未执行）：
 
-1. 在 `voice/runtime/voice.env` 本机填入有效 Key，确认音频设备名称。不要将凭据提交到 Git。
+1. Key 已配置并验证；接入音频设备，确认 `voice/runtime/voice.env` 中设备名称与实际枚举匹配。不要将凭据提交到 Git。
 2. 确认机器人所连网卡与地址后，设置 `voice/runtime/deployment.env` 的 `ROS_INTERFACE` 和 `NAV_IFACE` 为实际网卡；若为 eno1，两个值均为 eno1。此文件不会自动配置网卡 IP。
 3. `systemctl --user restart voice-arm-bridge`，检查 `curl -s http://127.0.0.1:8765/healthz`。
 4. 在现场安全条件满足后，依次启动 `voice-navigation`、`voice-arm-control`，再启动 `voice-tour-guide`，每一步检查状态与日志。
