@@ -2,7 +2,7 @@
 
 ## new-orin 离线部署（2026-09-09 检查）
 
-系统音频播放更新：默认 `aplay -D pulse`，正式导览 supervisor、路线助手与离线调试统一使用系统输出，不再通过 SPEAKER_NAME 自动直连 plughw。保留 `APLAY_DEVICE`/`--aplay-device` 显式覆盖。调试预检查拒绝虚拟空输出，音频服务不可用时不回退到硬件。77 项测试通过，设备预检查通过；真实短语音的 PulseAudio 流已观察到，路由到默认 REDMI USB 音响，播放前后系统音量保持 6%。这证明路由和音量设置未被覆盖，不代表现场听感已经确认。
+系统音频播放更新：默认 `aplay -D pulse`，正式导览 supervisor、路线助手与离线调试统一使用系统输出，不再通过 SPEAKER_NAME 自动直连 plughw。保留 `APLAY_DEVICE`/`--aplay-device` 显式覆盖。调试预检查拒绝虚拟空输出，音频服务不可用时不回退到硬件。77 项测试通过，设备预检查通过；真实短语音的 PulseAudio 流已观察到，路由到默认 REDMI USB 音响，播放前后系统音量保持 12%。这证明路由和音量设置未被覆盖，不代表现场听感已经确认。
 
 
 新增硬件语音调试入口 `voice/scripts/debug_tour_no_robot.sh`，用法见 `voice/DEBUG_NO_ROBOT.md`。默认 DJI MIC MINI、首个路线项，导航/手臂由进程内模拟替代；不创建真实 ROS/HTTP 客户端，不改变正式服务。支持选点、模拟行走时间和台词等待上限。70 项测试通过；实机真实麦克风 + 实时 STT + CUDA + ALSA null 输出的短路线完成并清理采集进程。音响尚未作为实际输出接通，真实外放/打断交互未验证；预检查会拒绝找不到的默认音响。
