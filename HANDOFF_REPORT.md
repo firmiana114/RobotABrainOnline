@@ -1,5 +1,33 @@
 # HANDOFF_REPORT
 
+## new-orin 离线部署（2026-09-09 检查）
+
+此节描述 `new-orin`，与下文历史 NX 部署分开。路径为 `/mnt/disk1/gt/RobotABrainOnline`，账号为 `pc`。
+
+- 使用用户级 systemd，所有服务操作必须加 `--user`。五个 unit 已安装；控制台与 HTTP/ROS 桥 active、enabled；导航、手臂、导览 inactive、disabled。用户 Linger=yes。
+- `python3 voice/scripts/install_user_services.py` 可重新生成适配当前目录的 unit，不启动服务，不覆盖已有运行时配置。控制台通过 `voice/runtime/systemctl-user` 管理用户级服务。
+- 系统 CUDA 的 `libcusparseLt.so.0` 错误链接到了 `libcusparse.so`。本次未改系统库，服务通过 `LD_LIBRARY_PATH` 优先使用旁目录 `../RobotABrainOnline-runtime/lib` 的正确库。Torch CUDA 运算通过；`pip check` 无冲突。
+- `voice/scripts/prewarm_offline.sh` 使用正式分块合成和缓存逻辑，无需 Key，不创建云客户端、不录音、不播放、不调用机器人。真实 CUDA 合成 34 段，均可读取、采样率 24000 Hz、数据有限，总时长 496 秒；另执行一次强制新合成探针。运行日志与派生路线位于 `voice/runtime/`，不进入 Git。
+- 镜像 `unitree_slam_example_new:humble` 的离线 check 通过，SDK、自定义 Action、六个节点及动态库完整。桥 `/healthz` 返回 ok，`/nav_state` 的订阅者为 0，与机器人离线一致；控制台首页 HTTP 200。
+- 原有测试 66 passed；新增离线模式测试 1 passed，验证无 Key 时离线模式不创建云客户端，正式模式仍拒绝无 Key。
+- `voice/runtime/deployment.env` 当前 `ROS_INTERFACE=lo`，桥只使用回环接口。现场机器人候选有线口 `eno1` 当前无链路；未修改 IP、路由，未启动运动节点。
+- `voice/runtime/voice.env` 已创建（0600），Key 留空。云端 STT/Qwen 真实调用尚未验证；未检测到文档指定的 Rx 麦克风及 REDMI 扬声器，实际采集和外放待设备连接。
+- 公网修复：同网段本机 DHCP 确认路由器/DNS 为 192.168.101.254；为 Tsinghua-WX-5G 补齐 ipv4.gateway 与 ipv4.dns，reapply 保留原 IP。DashScope HTTPS 返回 401（无凭据连通测试），NTP 已同步。回滚可将该连接 gateway、dns 恢复为空并 reapply。
+- 用户明确授权配置 `pc` 免密 sudo：`/etc/sudoers.d/90-pc-nopasswd`；完整 sudoers 校验及 `sudo -n true` 通过。无需密码写入项目。
+
+现场接入顺序（以下尚未执行）：
+
+1. 在 `voice/runtime/voice.env` 本机填入有效 Key，确认音频设备名称。不要将凭据提交到 Git。
+2. 确认机器人所连网卡与地址后，设置 `voice/runtime/deployment.env` 的 `ROS_INTERFACE` 和 `NAV_IFACE` 为实际网卡；若为 eno1，两个值均为 eno1。此文件不会自动配置网卡 IP。
+3. `systemctl --user restart voice-arm-bridge`，检查 `curl -s http://127.0.0.1:8765/healthz`。
+4. 在现场安全条件满足后，依次启动 `voice-navigation`、`voice-arm-control`，再启动 `voice-tour-guide`，每一步检查状态与日志。
+5. `curl -s http://127.0.0.1:8766/status` 必须显示真实预热就绪；再通过网页手动启动导览。离线桥正常不代表机器人在线或导览就绪。
+
+常用检查：`systemctl --user status voice-control-console voice-arm-bridge`；`journalctl --user -u voice-arm-bridge -n 50`；网页端口 8081。
+
+本次保留原有 README.md、PROJECT_GUIDE.md、voice/voice_console/app.py 修改及 backups、agent_orchestration.json；不提交这些既有改动。
+
+
 ## 项目整体描述
 
 - 统一仓库路径：本机 `projects/RobotABrainOnline`，Orin NX `/home/unitree/RobotABrainOnline`；AGX `/mnt/ssd/navgation/projects/temp/unitree_slam_example_new` 仅为历史部署副本。
