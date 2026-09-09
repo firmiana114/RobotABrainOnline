@@ -2,6 +2,9 @@
 
 ## new-orin 离线部署（2026-09-09 检查）
 
+新增硬件语音调试入口 `voice/scripts/debug_tour_no_robot.sh`，用法见 `voice/DEBUG_NO_ROBOT.md`。默认 DJI MIC MINI、首个路线项，导航/手臂由进程内模拟替代；不创建真实 ROS/HTTP 客户端，不改变正式服务。支持选点、模拟行走时间和台词等待上限。70 项测试通过；实机真实麦克风 + 实时 STT + CUDA + ALSA null 输出的短路线完成并清理采集进程。音响尚未作为实际输出接通，真实外放/打断交互未验证；预检查会拒绝找不到的默认音响。
+
+
 此节描述 `new-orin`，与下文历史 NX 部署分开。路径为 `/mnt/disk1/gt/RobotABrainOnline`，账号为 `pc`。
 
 - 使用用户级 systemd，所有服务操作必须加 `--user`。五个 unit 已安装；控制台与 HTTP/ROS 桥 active、enabled；导航、手臂、导览 inactive、disabled。用户 Linger=yes。
