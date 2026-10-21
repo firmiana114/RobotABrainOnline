@@ -873,7 +873,7 @@ Key 来源：
 unitree_slam_example_new:humble
 ```
 
-`docker/Dockerfile` 分为构建和运行阶段：
+`docker/Dockerfile` 先从官方 `ros:humble-ros-base-jammy` 安装 ROS/C++ 依赖，再分为构建和运行阶段；不依赖旧 GHCR portable 镜像：
 
 1. 从外部 build context 复制 Unitree SDK2 到 `/opt/unitree_sdk2`。
 2. 用 colcon 构建 `custom_action_interfaces`。

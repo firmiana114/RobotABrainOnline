@@ -1,6 +1,26 @@
-ARG BASE_IMAGE=ghcr.io/aaronai/rabbitbot-nav-portable:20260611
+ARG BASE_IMAGE=ros:humble-ros-base-jammy
 
-FROM ${BASE_IMAGE} AS builder
+# Build the ROS environment here instead of relying on a private portable image.
+FROM ${BASE_IMAGE} AS runtime-base
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    cmake \
+    libeigen3-dev \
+    python3-colcon-common-extensions \
+    ros-humble-ament-cmake \
+    ros-humble-ament-lint-auto \
+    ros-humble-ament-lint-common \
+    ros-humble-rclpy \
+    ros-humble-rclcpp \
+    ros-humble-rclcpp-action \
+    ros-humble-std-msgs \
+    ros-humble-geometry-msgs \
+    ros-humble-rosidl-default-generators \
+    ros-humble-rmw-fastrtps-cpp \
+    && rm -rf /var/lib/apt/lists/*
+
+FROM runtime-base AS builder
 
 ENV LANG=C.UTF-8 \
     LC_ALL=C.UTF-8 \
@@ -33,7 +53,7 @@ RUN test -d /opt/unitree_sdk2/include \
         cmake --build /tmp/unitree_slam_build -j "$(nproc)"; \
         cmake --install /tmp/unitree_slam_build'
 
-FROM ${BASE_IMAGE}
+FROM runtime-base
 
 ENV LANG=C.UTF-8 \
     LC_ALL=C.UTF-8 \

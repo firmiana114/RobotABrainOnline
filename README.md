@@ -1,6 +1,6 @@
 # RobotABrainOnline
 
-> 在新的 Jetson Orin 上部署，请阅读 [本项目 Orin 部署指南](DEPLOY_GUIDE.md)：根据 Codex 部署历史整理，包含环境准备、安装命令、分层验收和仍需备齐的材料。Orin 使用用户级 systemd；下文 NX 启动命令不能直接套用。
+> 在新的 Jetson Orin 上部署，请阅读 [本项目 Orin 部署指南](DEPLOY_GUIDE.md)：包含环境准备、源码构建镜像、语音验证和机器人启动步骤。Orin 使用用户级 systemd；下文 NX 启动命令不能直接套用。
 
 RobotABrainOnline 是 Unitree G1 的在线导览项目，整合 ROS 2 Humble 导航、手臂动作、网页控制台、阿里云语音识别与 Qwen 问答，以及 Kokoro 中文语音合成。
 

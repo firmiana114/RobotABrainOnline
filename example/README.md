@@ -26,7 +26,7 @@ docker run --rm --network host --ipc host --privileged \
 ./docker/build_example.sh
 ```
 
-`build_example.sh` 只使用现有镜像，不会重新构建镜像。需要重新生成镜像时，显式执行：
+`build_example.sh` 只使用现有镜像，不会重新构建镜像。需要重新生成镜像时，从官方 ROS Humble 基础镜像安装依赖并编译，不需要旧 GHCR 镜像或 tar。先准备 Unitree SDK2（获取步骤见 [部署指南](../DEPLOY_GUIDE.md)），再执行：
 
 ```bash
 UNITREE_SDK2_CONTEXT=/path/to/unitree_sdk2 ./docker/build_image.sh
