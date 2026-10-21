@@ -303,36 +303,9 @@ def load_assistant(voice_project):
 
 
 def resolve_aplay_device(args):
-    if args.aplay_device:
-        return args.aplay_device
-    if not args.speaker_name:
-        return None
-
-    try:
-        result = subprocess.run(
-            ["aplay", "-l"],
-            check=False,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-        )
-    except Exception as exc:
-        print(f"[voice] failed to query playback devices: {exc!r}", flush=True)
-        return None
-
-    pattern = re.compile(r"card\s+(\d+):\s+.*\[(.*?)\],\s+device\s+(\d+):")
-    for line in result.stdout.splitlines():
-        match = pattern.search(line)
-        if not match:
-            continue
-        card, name, device = match.groups()
-        if args.speaker_name.lower() in name.lower():
-            aplay_device = f"plughw:{card},{device}"
-            print(f"[voice] matched speaker {name!r}: {aplay_device}", flush=True)
-            return aplay_device
-
-    print(f"[voice] speaker {args.speaker_name!r} not found, use default playback", flush=True)
-    return None
+    # Use the desktop audio server unless a caller explicitly requests ALSA.
+    # Speaker names and USB card indices must not select a hardware bypass.
+    return args.aplay_device or "pulse"
 
 
 def make_voice_args(args):

@@ -1,5 +1,36 @@
 # HANDOFF_REPORT
 
+## new-orin 离线部署（2026-09-09 检查）
+
+系统音频播放更新：默认 `aplay -D pulse`，正式导览 supervisor、路线助手与离线调试统一使用系统输出，不再通过 SPEAKER_NAME 自动直连 plughw。保留 `APLAY_DEVICE`/`--aplay-device` 显式覆盖。调试预检查拒绝虚拟空输出，音频服务不可用时不回退到硬件。77 项测试通过，设备预检查通过；真实短语音的 PulseAudio 流已观察到，路由到默认 REDMI USB 音响，播放前后系统音量保持 12%。这证明路由和音量设置未被覆盖，不代表现场听感已经确认。 新增硬件语音调试入口 `voice/scripts/debug_tour_no_robot.sh`，用法见 `voice/DEBUG_NO_ROBOT.md`。默认 DJI MIC MINI、首个路线项，导航/手臂由进程内模拟替代；不创建真实 ROS/HTTP 客户端，不改变正式服务。支持选点、模拟行走时间和台词等待上限。70 项测试通过；实机真实麦克风 + 实时 STT + CUDA + ALSA null 输出的短路线完成并清理采集进程。音响尚未作为实际输出接通，真实外放/打断交互未验证；预检查会拒绝找不到的默认音响。
+
+此节描述 `new-orin`，与下文历史 NX 部署分开。路径为 `/mnt/disk1/gt/RobotABrainOnline`，账号为 `pc`。
+
+- 使用用户级 systemd，所有服务操作必须加 `--user`。五个 unit 已安装；控制台与 HTTP/ROS 桥 active、enabled；导航、手臂、导览 inactive、disabled。用户 Linger=yes。
+- `python3 voice/scripts/install_user_services.py` 可重新生成适配当前目录的 unit，不启动服务，不覆盖已有运行时配置。控制台通过 `voice/runtime/systemctl-user` 管理用户级服务。
+- 系统 CUDA 的 `libcusparseLt.so.0` 错误链接到了 `libcusparse.so`。本次未改系统库，服务通过 `LD_LIBRARY_PATH` 优先使用旁目录 `../RobotABrainOnline-runtime/lib` 的正确库。Torch CUDA 运算通过；`pip check` 无冲突。
+- `voice/scripts/prewarm_offline.sh` 使用正式分块合成和缓存逻辑，无需 Key，不创建云客户端、不录音、不播放、不调用机器人。真实 CUDA 合成 34 段，均可读取、采样率 24000 Hz、数据有限，总时长 496 秒；另执行一次强制新合成探针。运行日志与派生路线位于 `voice/runtime/`，不进入 Git。
+- 镜像 `unitree_slam_example_new:humble` 的离线 check 通过，SDK、自定义 Action、六个节点及动态库完整。桥 `/healthz` 返回 ok，`/nav_state` 的订阅者为 0，与机器人离线一致；控制台首页 HTTP 200。
+- 原有测试 66 passed；新增离线模式测试 1 passed，验证无 Key 时离线模式不创建云客户端，正式模式仍拒绝无 Key。
+- `voice/runtime/deployment.env` 当前 `ROS_INTERFACE=lo`，桥只使用回环接口。现场机器人候选有线口 `eno1` 当前无链路；未修改 IP、路由，未启动运动节点。
+- `voice/runtime/voice.env` 已由用户填入 Key（权限仍为 0600）。已实际验证 Qwen 问答（1.23 秒）及 paraformer-realtime-v2 识别（0.67 秒）：合成测试音频中的四个关键词均匹配。未输出 Key、识别全文或回答正文。
+- 完整无硬件验证通过：CUDA 合成测试提问 → 云端 STT → 项目 `stream_qwen_and_speak_by_sentence`（开启搜索）→ CUDA 回答合成，生成可读取、24000 Hz、数据有限的 2.5 秒 WAV，全程 16.16 秒（含模型初始化）。仅在独立验证进程中将播放函数替换为音频文件校验；没有录音、外放或机器人调用。结果位于 `voice/runtime/cloud_verification.json` 和 `voice/runtime/pipeline_verification.json`；探针脚本及测试音频也位于 runtime，不进入 Git。
+- 未检测到文档指定的 Rx 麦克风及 REDMI 扬声器，实际采集和外放待设备连接。导览常驻服务仍保持 inactive，未绕过真实导航订阅者就绪检查。
+- 公网修复：同网段本机 DHCP 确认路由器/DNS 为 192.168.101.254；为 Tsinghua-WX-5G 补齐 ipv4.gateway 与 ipv4.dns，reapply 保留原 IP。DashScope HTTPS 返回 401（无凭据连通测试），NTP 已同步。回滚可将该连接 gateway、dns 恢复为空并 reapply。
+- 用户明确授权配置 `pc` 免密 sudo：`/etc/sudoers.d/90-pc-nopasswd`；完整 sudoers 校验及 `sudo -n true` 通过。无需密码写入项目。
+
+现场接入顺序（以下尚未执行）：
+
+1. Key 已配置并验证；接入音频设备，确认 `voice/runtime/voice.env` 中设备名称与实际枚举匹配。不要将凭据提交到 Git。
+2. 确认机器人所连网卡与地址后，设置 `voice/runtime/deployment.env` 的 `ROS_INTERFACE` 和 `NAV_IFACE` 为实际网卡；若为 eno1，两个值均为 eno1。此文件不会自动配置网卡 IP。
+3. `systemctl --user restart voice-arm-bridge`，检查 `curl -s http://127.0.0.1:8765/healthz`。
+4. 在现场安全条件满足后，依次启动 `voice-navigation`、`voice-arm-control`，再启动 `voice-tour-guide`，每一步检查状态与日志。
+5. `curl -s http://127.0.0.1:8766/status` 必须显示真实预热就绪；再通过网页手动启动导览。离线桥正常不代表机器人在线或导览就绪。
+
+常用检查：`systemctl --user status voice-control-console voice-arm-bridge`；`journalctl --user -u voice-arm-bridge -n 50`；网页端口 8081。
+
+本次保留原有 README.md、PROJECT_GUIDE.md、voice/voice_console/app.py 修改及 backups、agent_orchestration.json；不提交这些既有改动。
+
 ## 项目整体描述
 
 - 统一仓库路径：本机 `projects/RobotABrainOnline`，Orin NX `/home/unitree/RobotABrainOnline`；AGX `/mnt/ssd/navgation/projects/temp/unitree_slam_example_new` 仅为历史部署副本。
@@ -69,55 +100,27 @@ docker run --rm unitree_slam_example_new:humble check
 
 ## `post_wait_seconds` 修复
 
-- 原因：`nav_route_then_speak.load_speech_segments()` 重建台词段时只复制文本，丢弃了 `post_wait_seconds`，执行阶段因此无法看到点位 8 的 277 秒等待。
-- 修复：路线加载时保留该字段，由 `voice_console/post_wait_runner.py` 统一归一化并在台词播报完成后等待。
-- 诊断日志会输出 `[route] post-wait start seconds=...` 和 `[route] post-wait complete seconds=...`，便于确认等待生效，不记录台词或隐私内容。
-- 回归测试覆盖字段保留、非法值、零等待和短等待执行链；点位 8 的 277 秒配置以及 0.05 秒短等待链路已验证。
+- 路线加载曾丢弃 `post_wait_seconds`；现保留该字段并由 `voice_console/post_wait_runner.py` 在播报后统一等待，日志为 `[route] post-wait start/complete`。
 
 ## 导览语音打断并发竞态修复
 
-- 根因：旧实现由播报打断主线程和后台空闲问答线程共同消费 `question_queue`；后台还会在非 `idle` 状态反复取出再放回。WAV 自然结束边界没有保留唤醒归属，最终识别稍晚到达时会被后台线程接走，主导览则已推进下一段。
-- `voice_console/interrupt.py` 新增 `RouteInterruptCoordinator`，为每次台词播放分配 attempt、为每次打断分配 session。播报中的中间唤醒先声明 session 再停止播放器，最终问题只能提交给该 session。
-- WAV 正常退出后默认保留 0.9 秒有界边界窗口；窗口内到达的唤醒仍归属当前台词。当前打断完成前主线程不会返回，Qwen 推理和回答播放期间无法推进下一段。
-- 打断问题不再进入后台队列；空闲问题使用独立有界队列和一个常驻串行消费者，不再反复回队或为每个问题创建线程。迟到的同一最终结果会在短窗口内去重，避免重复回答。
-- “继续导览”、无完整问题超时和回答完成后仍从当前台词开头重播；回答异常先播放降级提示，处理结束后才恢复。
-- 打断问答成功播放完毕后，会先播报“如果没有别的问题，我将继续导览。”，提示结束后才从当前台词开头恢复；空闲问答、继续命令、无问题超时和回答失败分支不播放该提示。
-- `play_audio_file()` 检查 `aplay` 返回码并区分正常完成、主动打断和播放失败。非零退出或启动/终止异常会抛出保留异常链的 `AudioPlaybackError`，不再被当作台词成功完成。
-- 新增 INFO/ERROR 诊断日志：attempt/session 生命周期、边界归属、问题片段数量与长度、回答阶段、音频设备、文件名和返回码；不记录识别全文、问题全文、密钥或音频数据。
-- 本机全量测试为 `32 passed, 2 skipped`，跳过项依赖本机未安装的 DashScope/完整语音栈；新增纯并发测试连续运行 10 轮均通过。NX Python 3.8 环境候选副本全量测试为 `34 passed`。
-- 未启动导航、手臂或完整导览，未发送机器人动作。真实麦克风、扬声器、慢 Qwen 网络和 WAV 自然结束边界仍需现场安全条件下验证。
+- `voice_console/interrupt.py` 的 `RouteInterruptCoordinator` 以 attempt/session 绑定每次播放与打断，WAV 结束后保留 0.9 秒边界窗口；打断问题不入后台队列，问答完成后提示“如果没有别的问题，我将继续导览。”再从当前台词开头恢复；`play_audio_file()` 非零返回码抛 `AudioPlaybackError`。真实麦克风/扬声器边界仍待现场验证。
 
 ## Kokoro 男性音色
 
-- 当前默认模型与音色为官方 `hexgrad/Kokoro-82M` / `zm_yunxi`；`zm_yunxi` 不属于先前的 `Kokoro-82M-v1.1-zh` 数字编号音色，因此切换时必须同时更换 repo 和 voice。
-- `voice_console.config` 统一维护默认 repo 和 voice；导览 supervisor 显式传入两者，并允许分别通过 `KOKORO_REPO_ID`、`KOKORO_VOICE` 覆盖。
-- 导览 WAV 缓存键包含模型、voice、语速和文本，旧 `zf_001`、`zm_029`、`zm_009` 缓存不会被新音色误用；新增运行时 WAV 已加入忽略规则，已有预生成缓存仍由 Git 保留。
-- NX 离线缓存已补齐通用模型和 `zm_yunxi` 音色；CUDA 内存合成生成 56,400 个采样点，未落盘或播放音频，也未启动正式导览或机器人节点。
+- 默认 `hexgrad/Kokoro-82M` / `zm_yunxi`（repo 与 voice 须同时切换），可用 `KOKORO_REPO_ID`、`KOKORO_VOICE` 覆盖；WAV 缓存键含模型、音色、语速和文本。
 
 ## 导览启动耗时分析
 
-- 2026-07-17 最近两次正式导览从 systemd 启动到进入首点分别为约 19.44 秒和 19.79 秒；路线派生只占约 0.08 秒，首点 `opening` 跳过导航，桥当时已有 2 个目标订阅者。
-- NX 离线分段计时总计 18.00 秒：Torch/Kokoro 导入 4.16 秒、模型加载到 CUDA 3.88 秒、Pipeline 初始化 7.27 秒、首次推理预热 2.70 秒。当前每次启动都创建新导览进程，所以这笔成本会重复发生。
-- 切换并补齐 `Kokoro-82M / zm_yunxi` 缓存后，离线冷进程总计 13.25 秒：导入 4.08 秒、模型与 CUDA 3.90 秒、Pipeline 2.60 秒、预热 2.66 秒；预计比旧模型少约 4.75 秒，但仍无法消除进程级冷启动。
-- 现改为两层生命周期：`voice-tour-guide.service` 常驻 Python 进程并监听回环地址 `127.0.0.1:8766`；“重启导览服务”负责冷启动和全部预热，“启动/关闭导览”只通过 `/start`、`/stop` 控制任务，复用模型、STT 和导航订阅。
-- 服务预热会生成整条当前路线的 Kokoro WAV 缓存；每次任务启动仍重新读取路线和问答上下文。修改路线、模型、音色或语音配置后应重启导览服务，保证任务启动前缓存完备。
-- 任务取消覆盖导航等待、台词播放和 `post_wait_seconds`；不可打断的问答回复策略保持不变，回复完成后才处理停止。旧实现也无法撤回已提交给导航节点的目标，本轮未扩大该能力。
-- 新增 `[startup] guide_cache_ready`、`[control] tour_starting/tour_stopping` 和任务状态日志；只记录阶段、耗时、段数和状态，不记录识别全文、问题全文、密钥或音频数据。
-- Python 3.8 候选副本全量模拟测试为 `61 passed`，覆盖常驻控制接口、配置重载、路线预缓存、取消路径、重复启动抑制，以及原有并发打断回归；未启动真实导览或发送机器人动作。
+- 冷启动约 13–19 秒主要耗在 Torch/Kokoro 导入、CUDA 加载与 Pipeline 初始化；现 `voice-tour-guide.service` 常驻并监听 `127.0.0.1:8766`，“重启导览服务”负责预热，“启动/关闭导览”仅调用 `/start`、`/stop`。改路线、模型或音色后须重启导览服务。
 
 ## Kokoro 中文语速稳定修复
 
-- 根因：Kokoro 0.9.4 的中文路径只按 ASCII `. ! ?` 分句，不识别中文标点；长段直接推理时音素超过 510 会被静默截断。原路线最长段为 185 字/747 音素，只保留 68.3%，旧 WAV 仅 18.275 秒并呈现明显节奏压缩。
-- 合成前现按中英文标点拆分，并依据实际 G2P 音素数二次切分；每块上限 220，显著低于 510 硬限制。无法安全切分或未生成音频时直接失败，不再接受截断结果。
-- 分块间按逗号、分号、句号加入 0.12/0.20/0.28 秒静音；缓存版本升级为 `zh-prosody-v2`，重启预热时会重建路线缓存，不复用旧异常 WAV。
-- 新增 `[tts] synthesis_ready` INFO 诊断，记录字符数、分块数、最大音素数、停顿总时长和采样数，不记录台词全文。
-- NX 离线 CUDA 验证原异常段变为 4 块、最大 215 音素、37.670 秒和约 4.91 字/秒；全路线 34 段拆为 65 块，最大 216 音素，无块接近硬限制。候选副本全量模拟测试 `66 passed`；验证 WAV 已删除，未播放音频或发送机器人动作。
+- Kokoro 中文长段超过 510 音素会被静默截断；现按中英文标点及实际音素数（上限 220）分块并插入短停顿，缓存版本 `zh-prosody-v2`，日志 `[tts] synthesis_ready`。
 
 ## 多台词文件热更新
 
-- “点位台词热更新”会枚举 `voice/conf/*.json` 并排除派生的 `*_route.json`，通过下拉框切换要加载、修改和保存的台词文件，不接受手工路径。
-- 后端校验文件名、真实路径和目录边界；非默认文件保存时生成同名 `_route.json` 与 `_qa_context.txt`。点击“启动导览”或“重启导览服务”会把当前选择生成到正式运行路线并原子记录到 `voice/runtime/active_dialogue.json`；路线、问答上下文和 `.bak` 快照均为本机派生内容，现由 `.gitignore` 排除且不再跟踪。
-- 新增 INFO/WARNING 日志记录文件列表刷新、选择、保存行数和拒绝原因，不记录台词正文；接口回归覆盖文件切换、独立保存、派生文件排除和路径穿越拒绝。
+- “点位台词热更新”下拉切换 `voice/conf/*.json`（排除 `*_route.json`），后端校验路径边界；启动导览或重启服务时把当前选择写入 `voice/runtime/active_dialogue.json`，派生路线、问答上下文与 `.bak` 不进 Git。
 
 ## dialogue_1 扩展功能段
 
@@ -126,21 +129,17 @@ docker run --rm unitree_slam_example_new:humble check
 
 ## 已验证事实
 
-- 2026-07-28 新增 `PROJECT_GUIDE.md`，并从根目录 `README.md` 提供入口；文档依据当前 Python、C++、Docker、systemd、配置和测试实现整理。
-- 控制台启动失败根因是迁移后的 `.venv/bin/activate` 仍硬编码旧目录 `/home/unitree/gt/voice/.venv`，使 systemd 最终调用缺少 `uvicorn` 的 `/usr/bin/python3`；控制台、导航和导览脚本已改为直接调用可迁移的 `${VENV_ROOT}/bin/python`，并记录实际解释器路径。
-- 根目录新增 `README.md`，集中说明 NX 正式导览的启动前安全检查、网页/命令行启动顺序、状态与日志查看、停止顺序和常见失败；不包含纯语音试听流程。
-- `docker run --rm unitree_slam_example_new:humble check` 成功；六个节点 ELF 的 `ldd` 无缺失依赖，RUNPATH 指向镜像内 SDK 和自定义 Action。
-- 无宿主 SDK 上下文仍可使用既有镜像编译 `custom_action_ws` 和六个节点。
-- Compose、Shell 语法、Python compileall 和 systemd unit 静态检查通过。
-- opening 合并路线检查确认 `dialogue_0/1` 均只生成一次握手；测试 fixture、问答计时回调、上下文选择、交互接口和有界记录测试已同步，NX 全套离线测试为 `84 passed`，未播放音频、启动导览或发送导航/机械臂任务。
-- Humble 临时订阅者已收到 HTTP 桥发布的 `/go_goal_pose`；临时 `/current_pose` 已到达桥和控制台，验证跨容器 ROS 数据链但未驱动机器人。
-- `goGoalNavigation eth0` 曾只完成 ROS/Unitree 初始化并保持 8 秒，未发送目标或启动重定位；真实运动链尚未验证。
-- 项目已从 NX `/home/unitree/gt` 原地迁移到 `/home/unitree/RobotABrainOnline`，旧路径已移除。
+- 2026-07-28 新增 `PROJECT_GUIDE.md` 与根目录 `README.md`（NX 正式导览启动前检查、启动/停止顺序、日志与常见失败）。
+- 迁移后控制台启动失败根因为 `.venv/bin/activate` 硬编码旧目录；脚本已改为直接调用 `${VENV_ROOT}/bin/python`。项目已从 NX `/home/unitree/gt` 迁到 `/home/unitree/RobotABrainOnline`。
+- `docker run --rm unitree_slam_example_new:humble check` 成功，六个节点无缺失依赖；无宿主 SDK 也可用镜像编译；Compose、Shell、compileall 与 unit 静态检查通过。
+- opening 合并路线确认 `dialogue_0/1` 均只握手一次，NX 全套离线测试 `84 passed`，未播放音频或发送机器人任务。
+- Humble 临时订阅者已收到桥发布的 `/go_goal_pose`、`/current_pose` 跨容器可达；`goGoalNavigation eth0` 仅完成初始化，真实运动链尚未验证。
 
 ## Git 与同步状态
 
 - 根目录是 `main` 分支 Git 仓库，`voice/` 由根仓库统一管理，不要在子目录再次执行 `git init`。
-- 2026-07-30 已合并本机 GitHub `main` 的项目指南历史与 NX 后续功能历史；后续每轮修改仍须更新本报告、创建中文提交，并确认本机与 NX 的 `HEAD` 一致。
+- 2026-07-30 已合并本机 GitHub `main` 的项目指南历史与 NX 后续功能历史；
+- 2026-10-21 已将 `codex/new-orin-offline-deploy`（Orin 离线部署、无机器人调试、系统音频播放）合并入 `main`，无文本冲突；因 `main` 已有“手势台词播完自动 `release_arm`”规则，同步更新 `voice/tests/test_debug_no_robot.py` 的预期动作序列。本机 Python 3.9 临时环境 `89 passed, 5 skipped`，唯一失败为本机未装 `torch`；`test_app.py` 依赖 3.10+ 类型语法，在本机需 `eval_type_backport` 才能导入。合并前本机未提交的 README/PROJECT_GUIDE/HANDOFF 改动与 `docs/` 已按用户要求丢弃，备份于 `git stash`。后续每轮修改仍须更新本报告、创建中文提交，并确认本机与 NX 的 `HEAD` 一致。
 
 ## 剩余阻塞与下一步
 

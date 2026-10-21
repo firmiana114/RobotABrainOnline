@@ -226,24 +226,26 @@ class RawAlsaInputStream:
 
 
 class TourGuideAssistant:
-    def __init__(self, args):
+    def __init__(self, args, *, offline_tts=False):
         self.args = args
 
-        api_key = clean_api_key(
-            os.getenv("DASHSCOPE_API_KEY") or os.getenv("OPENAI_API_KEY")
-        )
-        if not api_key:
-            raise RuntimeError("没有找到 DASHSCOPE_API_KEY，请先设置 DashScope API Key")
+        self.qwen_client = None
+        if not offline_tts:
+            api_key = clean_api_key(
+                os.getenv("DASHSCOPE_API_KEY") or os.getenv("OPENAI_API_KEY")
+            )
+            if not api_key:
+                raise RuntimeError("没有找到 DASHSCOPE_API_KEY，请先设置 DashScope API Key")
 
-        dashscope.api_key = api_key
+            dashscope.api_key = api_key
 
-        self.qwen_client = OpenAI(
-            api_key=api_key,
-            base_url=(
-                os.getenv("OPENAI_BASE_URL")
-                or "https://dashscope.aliyuncs.com/compatible-mode/v1"
-            ),
-        )
+            self.qwen_client = OpenAI(
+                api_key=api_key,
+                base_url=(
+                    os.getenv("OPENAI_BASE_URL")
+                    or "https://dashscope.aliyuncs.com/compatible-mode/v1"
+                ),
+            )
 
         self.running = True
 
