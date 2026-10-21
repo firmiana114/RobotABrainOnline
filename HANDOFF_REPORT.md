@@ -29,7 +29,7 @@
 
 常用检查：`systemctl --user status voice-control-console voice-arm-bridge`；`journalctl --user -u voice-arm-bridge -n 50`；网页端口 8081。
 
-本次保留原有 README.md、PROJECT_GUIDE.md、voice/voice_console/app.py 修改及 backups、agent_orchestration.json；不提交这些既有改动。
+2026-10-21 新增根目录 `DEPLOY_GUIDE.md`（README 顶部有入口）：只写 Orin 用户级 systemd 路线，从 clone 到只读验证再到现场接入，分步给出命令、验证与常见失败；Orin 的 venv/torch 安装、JetPack 版本、`unitree_sdk2` 与模型缓存来源、正确 `libcusparseLt` 来源仍标“未确认”，需向维护者补齐后更新该文档。
 
 ## 项目整体描述
 

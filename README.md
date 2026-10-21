@@ -1,5 +1,7 @@
 # RobotABrainOnline
 
+> 在新的 Jetson Orin 设备上从 `git clone` 到部署完成的全流程，见 [DEPLOY_GUIDE.md](DEPLOY_GUIDE.md)。
+
 RobotABrainOnline 是 Unitree G1 的在线导览项目，整合 ROS 2 Humble 导航、手臂动作、网页控制台、阿里云语音识别与 Qwen 问答，以及 Kokoro 中文语音合成。
 
 本文只说明 NX 上已经完成部署后的正式导览启动方法。正式导览会向机器人发送导航目标和手臂动作；执行前必须确认现场安全并获得操作授权。
