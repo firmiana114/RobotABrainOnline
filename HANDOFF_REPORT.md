@@ -29,7 +29,9 @@
 
 常用检查：`systemctl --user status voice-control-console voice-arm-bridge`；`journalctl --user -u voice-arm-bridge -n 50`；网页端口 8081。
 
-2026-10-21 新增根目录 `DEPLOY_GUIDE.md`（README 顶部有入口）：只写 Orin 用户级 systemd 路线，从 clone 到只读验证再到现场接入，分步给出命令、验证与常见失败；Orin 的 venv/torch 安装、JetPack 版本、`unitree_sdk2` 与模型缓存来源、正确 `libcusparseLt` 来源仍标“未确认”，需向维护者补齐后更新该文档。
+2026-10-21 已根据 Codex 会话「部署项目到 new-orin」（`019facdc-2fd7-78c0-9517-7f432f9fe5d1`）及「0909 | 检查 Orin 项目部署状态」（`01a08431-bb07-7db2-b76d-cbf35b5459e9`）补全 `DEPLOY_GUIDE.md` 新手指南。找回 Python 3.10、JetPack 6 系列/NVIDIA torch wheel 与主要包版本、SDK 从已有 Humble 镜像提取、Kokoro 三文件缓存下载、8081 端口迁移历史。新增镜像导入、隔离 venv、依赖安装、GPU 运算检查、模型下载、停止/升级及分层验收说明；复现命令与历史实测明确区分。
+
+本次仅修改文档，核对历史、源码、命令语法和文档链接，未连接 Orin、未安装依赖或启动服务。历史后续提交 `52bd76e`、`a572261` 在本地 Git 无法解析，当前代码也未包含所述独立问答行为，不能套用其独立问答/预热行为。精确 JetPack/L4T 组合、torch/cuSPARSELt 原始发行包与校验和、完整依赖锁定及模型 revision 仍待补齐；未进行空白设备部署或真实机器人验收。
 
 ## 项目整体描述
 
